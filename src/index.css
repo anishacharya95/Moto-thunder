@@ -1,0 +1,44 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+
+  body {
+    font-family: 'Rajdhani', system-ui, sans-serif;
+    overflow: hidden;
+    background-color: #050508;
+  }
+
+  .font-racing {
+    font-family: 'Chakra Petch', 'Rajdhani', sans-serif;
+  }
+
+  .font-teko {
+    font-family: 'Teko', sans-serif;
+  }
+}
+
+/* Custom motorsport styling */
+.speed-gradient {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(20, 20, 30, 0.6) 100%);
+}
+
+.hud-panel {
+  background: rgba(10, 12, 18, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.racing-glow {
+  text-shadow: 0 0 12px rgba(239, 68, 68, 0.7);
+}
+
+/* Hide scrollbars completely */
+::-webkit-scrollbar {
+  display: none;
+}

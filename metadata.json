@@ -1,0 +1,8 @@
+{
+  "name": "Moto Thunder GP",
+  "description": "Android-first 3D motorcycle circuit racing game with realistic lean physics, AI riders, championships, garage upgrades, and original circuits.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
