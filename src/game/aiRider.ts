@@ -24,18 +24,18 @@ export class AIRiderController {
   private maxBraking: number;
   private targetSpeedMs: number = 0;
 
+  private gridSlotIndex: number;
+  private trackLength: number;
+  private raceTime = 0;        // seconds since green flag
+  private lastLapMarker = 0;   // raceTime at the start of the current lap
+
   constructor(profile: RiderProfile, track: BuiltTrack, gridSlotIndex: number) {
     this.profile = profile;
+    this.gridSlotIndex = gridSlotIndex;
+    this.trackLength = track.trackLength;
 
     const bikeDef = MOTORCYCLES.find((b) => b.id === profile.bikeId) || MOTORCYCLES[0];
     this.bike = buildMotorcycle(bikeDef);
-
-    // Initial position on grid
-    const slot = track.gridSlots[gridSlotIndex] || track.gridSlots[0];
-    this.bike.root.position.copy(slot.position);
-    this.heading = slot.rotationY;
-    this.bike.root.rotation.y = -this.heading;
-    this.progress = slot.progress;
 
     // Performance tuning based on skill
     const skill = profile.skill;
@@ -46,7 +46,7 @@ export class AIRiderController {
     this.raceState = {
       rider: profile,
       distanceOnTrack: 0,
-      splineProgress: slot.progress,
+      splineProgress: 0,
       currentLap: 1,
       currentPosition: gridSlotIndex + 1,
       speedKmh: 0,
@@ -68,6 +68,52 @@ export class AIRiderController {
 
     this.targetLateralOffset = (Math.random() - 0.5) * 4.5;
     this.lateralOffset = this.targetLateralOffset;
+
+    this.resetToGrid(track);
+  }
+
+  /**
+   * Return this rider to its grid slot with a fully clean race state.
+   * distanceOnTrack uses the same datum as the player (measured forward from
+   * the start/finish line), so live positions compare like with like.
+   */
+  public resetToGrid(track: BuiltTrack): void {
+    const slot = track.gridSlots[this.gridSlotIndex] || track.gridSlots[0];
+
+    this.trackLength = track.trackLength;
+    this.bike.root.position.copy(slot.position);
+    this.bike.root.rotation.set(0, -slot.rotationY, 0);
+    this.heading = slot.rotationY;
+    this.progress = slot.progress;
+    this.speedMs = 0;
+    this.targetSpeedMs = 0;
+    this.leanAngle = 0;
+    this.gear = 1;
+    this.rpm = 4200;
+    this.lateralOffset = this.targetLateralOffset;
+    this.raceTime = 0;
+    this.lastLapMarker = 0;
+
+    const rs = this.raceState;
+    rs.distanceOnTrack = slot.progress * track.trackLength;
+    rs.splineProgress = slot.progress;
+    rs.currentLap = 1;
+    rs.currentPosition = this.gridSlotIndex + 1;
+    rs.speedKmh = 0;
+    rs.gear = 1;
+    rs.rpm = 4200;
+    rs.leanAngleRad = 0;
+    rs.isCrouched = false;
+    rs.isOffTrack = false;
+    rs.isDrafting = false;
+    rs.lastLapTime = null;
+    rs.bestLapTime = null;
+    rs.currentLapTime = 0;
+    rs.sectorTimes = [];
+    rs.finished = false;
+    rs.finishTime = null;
+    rs.gapToLeaderSec = 0;
+    rs.gapToAheadSec = 0;
   }
 
   public update(
@@ -129,13 +175,25 @@ export class AIRiderController {
 
     // Advance along spline
     const distanceStep = this.speedMs * dt;
+    this.raceTime += dt;
     this.raceState.distanceOnTrack += distanceStep;
     this.progress = (this.progress + distanceStep / track.trackLength) % 1.0;
     this.raceState.splineProgress = this.progress;
 
-    if (this.progress < 0.05 && this.raceState.splineProgress > 0.9) {
-      this.raceState.currentLap++;
+    // Lap progression derives from the unwrapped distance from the start/finish
+    // line. One line crossing is taken to begin the race from the grid, so a
+    // completed lap is only registered on the second and later crossings.
+    const lap = Math.max(1, Math.floor(this.raceState.distanceOnTrack / this.trackLength));
+    if (lap > this.raceState.currentLap) {
+      const lapTimeMs = (this.raceTime - this.lastLapMarker) * 1000;
+      this.lastLapMarker = this.raceTime;
+      this.raceState.lastLapTime = lapTimeMs;
+      if (!this.raceState.bestLapTime || lapTimeMs < this.raceState.bestLapTime) {
+        this.raceState.bestLapTime = lapTimeMs;
+      }
+      this.raceState.currentLap = lap;
     }
+    this.raceState.currentLapTime = (this.raceTime - this.lastLapMarker) * 1000;
 
     // Update 3D Position
     const currentPt = track.spline.getPointAt(this.progress);

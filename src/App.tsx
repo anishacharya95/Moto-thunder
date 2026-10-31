@@ -66,15 +66,24 @@ export default function App() {
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<RacingEngine | null>(null);
 
-  // Persist save data on change
+  // Persist save data on change.
+  // saveDataRef is the synchronous source of truth: race callbacks outlive the
+  // render they were created in, so they must read/write the latest save rather
+  // than the snapshot captured when the race started.
+  const saveDataRef = useRef<PlayerSaveData>(saveData);
+
   const handleUpdateSaveData = (newData: PlayerSaveData) => {
+    saveDataRef.current = newData;
     setSaveData(newData);
     saveGameData(newData);
   };
 
+  const updateSaveData = (updater: (prev: PlayerSaveData) => PlayerSaveData) => {
+    handleUpdateSaveData(updater(saveDataRef.current));
+  };
+
   const handleUpdateSettings = (newSettings: PlayerSettings) => {
-    const updated = { ...saveData, settings: newSettings };
-    handleUpdateSaveData(updated);
+    updateSaveData((prev) => ({ ...prev, settings: newSettings }));
   };
 
   // Launch a race
@@ -118,13 +127,12 @@ export default function App() {
           // race start hook
         },
         onLapCompleted: (lap, lapTimeMs, bestLapMs) => {
-          if (bestLapMs) {
-            const currentBest = saveData.bestLaps[selectedCircuit.id];
-            if (!currentBest || bestLapMs < currentBest) {
-              const updatedBests = { ...saveData.bestLaps, [selectedCircuit.id]: bestLapMs };
-              handleUpdateSaveData({ ...saveData, bestLaps: updatedBests });
-            }
-          }
+          if (!bestLapMs) return;
+          updateSaveData((prev) => {
+            const currentBest = prev.bestLaps[selectedCircuit.id];
+            if (currentBest && currentBest <= bestLapMs) return prev;
+            return { ...prev, bestLaps: { ...prev.bestLaps, [selectedCircuit.id]: bestLapMs } };
+          });
         },
         onRaceFinish: (results) => {
           const playerResult = results.find((r) => r.rider.isPlayer) || results[0];
@@ -144,33 +152,49 @@ export default function App() {
           setEarnedCredits(prize);
           setPostRaceResults(results);
 
-          // Update career stats & credits
-          const updatedWins = pos === 1 ? saveData.careerWins + 1 : saveData.careerWins;
-          let updatedStandings = [...saveData.championshipStandings];
-          let updatedRound = saveData.championshipCurrentRound;
+          // Update career stats, credits and championship standings in one
+          // atomic write against the latest save data.
+          updateSaveData((prev) => {
+            const isChampionship = activeMode === 'championship';
+            const standings = prev.championshipStandings.map((s) => ({ ...s }));
 
-          // If championship mode, calculate points (25, 20, 16, 13, 11, 10, 9, 8, 7, 6, 5, 4)
-          if (activeMode === 'championship') {
-            const pointsTable = [25, 20, 16, 13, 11, 10, 9, 8, 7, 6, 5, 4];
-            results.forEach((r, idx) => {
-              const pts = pointsTable[idx] || 0;
-              const standingItem = updatedStandings.find((s) => s.riderId === r.rider.id);
-              if (standingItem) {
+            if (isChampionship) {
+              // MotoGP-style points: 25, 20, 16, 13, 11, 10, 9, 8, 7, 6, 5, 4
+              const pointsTable = [25, 20, 16, 13, 11, 10, 9, 8, 7, 6, 5, 4];
+              results.forEach((r, idx) => {
+                const pts = pointsTable[idx] || 0;
+                if (pts <= 0) return;
+
+                let standingItem = standings.find((s) => s.riderId === r.rider.id);
+                if (!standingItem) {
+                  standingItem = {
+                    riderId: r.rider.id,
+                    name: r.rider.name,
+                    bikeName:
+                      MOTORCYCLES.find((b) => b.id === r.rider.bikeId)?.name || r.rider.bikeId,
+                    points: 0,
+                    wins: 0,
+                    podiums: 0,
+                    isPlayer: r.rider.isPlayer,
+                  };
+                  standings.push(standingItem);
+                }
                 standingItem.points += pts;
                 if (idx === 0) standingItem.wins += 1;
                 if (idx < 3) standingItem.podiums += 1;
-              }
-            });
-            updatedRound = Math.min(CIRCUITS.length, updatedRound + 1);
-          }
+              });
+            }
 
-          handleUpdateSaveData({
-            ...saveData,
-            credits: saveData.credits + prize,
-            careerRaces: saveData.careerRaces + 1,
-            careerWins: updatedWins,
-            championshipCurrentRound: updatedRound,
-            championshipStandings: updatedStandings,
+            return {
+              ...prev,
+              credits: prev.credits + prize,
+              careerRaces: prev.careerRaces + 1,
+              careerWins: pos === 1 ? prev.careerWins + 1 : prev.careerWins,
+              championshipCurrentRound: isChampionship
+                ? Math.min(CIRCUITS.length, prev.championshipCurrentRound + 1)
+                : prev.championshipCurrentRound,
+              championshipStandings: standings,
+            };
           });
         },
         onTelemetryUpdate: (data) => {

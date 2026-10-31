@@ -283,6 +283,15 @@ export const MOTORCYCLES: BikeDefinition[] = [
   },
 ];
 
+/**
+ * Stable identity for a rider, shared by race results and championship standings.
+ * The rule must stay byte-identical to the one used by older builds so standings
+ * already written to save data keep matching after an update.
+ */
+export function riderIdForName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, '_');
+}
+
 export const AI_RIDER_ROSTER = [
   { name: 'Matteo Rossi', nationality: 'Italy', number: 46, bikeId: 'veloce_v4', skill: 1.02, aggressiveness: 0.95 },
   { name: 'Kenji Takahashi', nationality: 'Japan', number: 30, bikeId: 'kinetix_r1000', skill: 0.98, aggressiveness: 0.8 },

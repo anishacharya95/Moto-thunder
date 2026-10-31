@@ -115,7 +115,9 @@ export const PostRaceModal: React.FC<PostRaceModalProps> = ({
                     <td className="py-2 px-3 text-zinc-400">{r.rider.bikeId.replace('_', ' ').toUpperCase()}</td>
                     <td className="py-2 px-3 font-mono">{formatTime(r.bestLapTime)}</td>
                     <td className="py-2 px-3 font-mono text-zinc-400">
-                      {r.finishTime ? formatTime(r.finishTime) : '+0.00s'}
+                      {r.currentPosition === 1 && r.finishTime != null
+                        ? formatTime(r.finishTime)
+                        : `+${r.gapToLeaderSec.toFixed(3)}s`}
                     </td>
                   </tr>
                 );

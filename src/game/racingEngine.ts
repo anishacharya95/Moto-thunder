@@ -9,7 +9,7 @@ import {
   PlayerSettings,
   TelemetryData,
 } from '../types/game';
-import { AI_RIDER_ROSTER } from '../data/bikes';
+import { AI_RIDER_ROSTER, riderIdForName } from '../data/bikes';
 import { buildTrack, BuiltTrack } from './trackBuilder';
 import { buildMotorcycle, BuiltBike } from './bikeBuilder';
 import { MotorcyclePhysics, RiderInput } from './physics';
@@ -64,9 +64,15 @@ export class RacingEngine {
   private raceFinished = false;
 
   private countdownTimer = 0;
+  private countdownInterval: number | null = null;
   private raceStartTime = 0;
   private lapStartTime = 0;
   private lastCheckpointIndex = 0;
+  // Unwrapped position on track: line crossings + progress inside the current
+  // lap. This is the single datum every rider is ranked by, so it must advance
+  // continuously across the start/finish line.
+  private playerLineCrossings = 0;
+  private lastPlayerProgress = 0;
   private checkpointsPassedInLap = new Set<number>();
 
   private frameId = 0;
@@ -197,8 +203,8 @@ export class RacingEngine {
         skill: 1.0,
         aggressiveness: 1.0,
       },
-      distanceOnTrack: 0,
-      splineProgress: 0,
+      distanceOnTrack: playerSlot.progress * this.builtTrack.trackLength,
+      splineProgress: playerSlot.progress,
       currentLap: 1,
       currentPosition: 1,
       speedKmh: 0,
@@ -225,7 +231,8 @@ export class RacingEngine {
         const gridSlotIdx = idx + 1;
         const aiController = new AIRiderController(
           {
-            id: `ai_${idx}`,
+            // Must match the id stored in championship standings.
+            id: riderIdForName(aiProfile.name),
             name: aiProfile.name,
             nationality: aiProfile.nationality,
             number: aiProfile.number,
@@ -278,8 +285,16 @@ export class RacingEngine {
     soundEngine.init();
     soundEngine.setVolumes(settings.soundVolume, settings.engineVolume, settings.fxVolume);
 
+    // Checkpoint ladder starts at the grid slot so lap validation always begins
+    // from the rider's real position on track.
+    const cpCount = this.builtTrack.checkpoints.length;
+    this.lastCheckpointIndex = Math.floor(playerSlot.progress * cpCount) % cpCount;
+    this.playerLineCrossings = 0;
+    this.lastPlayerProgress = playerSlot.progress;
+
     if (this.mode === 'practice') {
       this.raceActive = true;
+      this.raceStartTime = performance.now();
       this.lapStartTime = performance.now();
     } else {
       this.startCountdown();
@@ -289,10 +304,14 @@ export class RacingEngine {
   }
 
   private startCountdown() {
-    this.countdownTimer = 0;
+    this.stopCountdown();
     this.builtTrack.setStartLightsCount(0, false);
+    this.callbacks.onCountdownUpdate(0, false, '');
 
-    const countdownInterval = window.setInterval(() => {
+    this.countdownInterval = window.setInterval(() => {
+      // A paused (or already disposed) engine must never advance the start sequence.
+      if (this.isPaused || !this.isRunning) return;
+
       this.countdownTimer++;
       if (this.countdownTimer <= 5) {
         this.builtTrack.setStartLightsCount(this.countdownTimer, false);
@@ -309,9 +328,18 @@ export class RacingEngine {
       } else if (this.countdownTimer >= 8) {
         this.builtTrack.setStartLightsCount(0, false);
         this.callbacks.onCountdownUpdate(0, false, '');
-        window.clearInterval(countdownInterval);
+        this.stopCountdown();
       }
     }, 1000);
+  }
+
+  /** Clear the start-light interval so it can never outlive the race or stack up. */
+  private stopCountdown() {
+    if (this.countdownInterval !== null) {
+      window.clearInterval(this.countdownInterval);
+      this.countdownInterval = null;
+    }
+    this.countdownTimer = 0;
   }
 
   public setPlayerInput(input: Partial<RiderInput>) {
@@ -333,37 +361,47 @@ export class RacingEngine {
   }
 
   public restart() {
+    // Tear down any running start sequence first, then reset every piece of
+    // race state so a restart is indistinguishable from a fresh session.
+    this.stopCountdown();
+    soundEngine.stopAll();
+
     const playerSlot = this.builtTrack.gridSlots[0];
     this.playerPhysics.setPosition(playerSlot.position, playerSlot.rotationY);
     this.playerBike.root.position.copy(playerSlot.position);
     this.playerBike.root.rotation.set(0, -playerSlot.rotationY, 0);
     this.cameraManager.reset();
 
-    this.playerState.distanceOnTrack = 0;
+    this.playerState.distanceOnTrack = playerSlot.progress * this.builtTrack.trackLength;
     this.playerState.splineProgress = playerSlot.progress;
     this.playerState.currentLap = 1;
+    this.playerState.currentPosition = 1;
     this.playerState.currentLapTime = 0;
+    this.playerState.lastLapTime = null;
+    this.playerState.bestLapTime = null;
+    this.playerState.sectorTimes = [];
     this.playerState.finished = false;
+    this.playerState.finishTime = null;
+    this.playerState.gapToLeaderSec = 0;
+    this.playerState.gapToAheadSec = 0;
+    this.playerState.isOffTrack = false;
     this.raceActive = false;
     this.raceFinished = false;
     this.checkpointsPassedInLap.clear();
+    const cpCount = this.builtTrack.checkpoints.length;
+    this.lastCheckpointIndex = Math.floor(playerSlot.progress * cpCount) % cpCount;
+    this.playerLineCrossings = 0;
+    this.lastPlayerProgress = playerSlot.progress;
+    this.raceStartTime = performance.now();
+    this.lapStartTime = performance.now();
 
-    this.aiControllers.forEach((ai, idx) => {
-      const slot = this.builtTrack.gridSlots[idx + 1] || this.builtTrack.gridSlots[0];
-      ai.bike.root.position.copy(slot.position);
-      ai.bike.root.rotation.set(0, -slot.rotationY, 0);
-      ai.speedMs = 0;
-      ai.progress = slot.progress;
-      ai.raceState.distanceOnTrack = 0;
-      ai.raceState.splineProgress = slot.progress;
-      ai.raceState.currentLap = 1;
-      ai.raceState.finished = false;
-    });
+    this.aiControllers.forEach((ai) => ai.resetToGrid(this.builtTrack));
 
     if (this.mode !== 'practice') {
       this.startCountdown();
     } else {
       this.raceActive = true;
+      this.raceStartTime = performance.now();
       this.lapStartTime = performance.now();
     }
   }
@@ -421,7 +459,6 @@ export class RacingEngine {
     // Lap & Checkpoint Validation
     const currentProgress = closestInfo.progress;
     this.playerState.splineProgress = currentProgress;
-    this.playerState.distanceOnTrack = (this.playerState.currentLap - 1) * this.builtTrack.trackLength + currentProgress * this.builtTrack.trackLength;
     this.playerState.speedKmh = phys.speedKmh;
     this.playerState.gear = phys.gear;
     this.playerState.rpm = phys.rpm;
@@ -430,13 +467,35 @@ export class RacingEngine {
     this.playerState.isCrouched = this.playerInput.tuckIn;
 
     const totalCheckpoints = this.builtTrack.checkpoints.length;
-    const currentCpIdx = Math.floor(currentProgress * totalCheckpoints);
+    const currentCpIdx = Math.floor(currentProgress * totalCheckpoints) % totalCheckpoints;
+
+    // Track every start/finish line crossing (forwards and backwards) so the
+    // ranking datum never jumps a lap when progress wraps from 1.0 back to 0.0.
+    if (this.lastPlayerProgress > 0.95 && currentProgress < 0.05) {
+      this.playerLineCrossings++;
+    } else if (this.lastPlayerProgress < 0.05 && currentProgress > 0.95) {
+      this.playerLineCrossings--;
+    }
+    this.lastPlayerProgress = currentProgress;
+    this.playerState.distanceOnTrack =
+      this.playerLineCrossings * this.builtTrack.trackLength +
+      currentProgress * this.builtTrack.trackLength;
     if (currentCpIdx !== this.lastCheckpointIndex) {
-      this.checkpointsPassedInLap.add(currentCpIdx);
+      // Only forward, in-order checkpoint progress counts, so a lap can never be
+      // banked by reversing over the line or by skipping a sector of the track.
+      const isNextForward = currentCpIdx === (this.lastCheckpointIndex + 1) % totalCheckpoints;
+      if (isNextForward) {
+        this.checkpointsPassedInLap.add(currentCpIdx);
+      }
       this.lastCheckpointIndex = currentCpIdx;
     }
 
-    if (this.raceActive && currentProgress < 0.05 && this.checkpointsPassedInLap.size > totalCheckpoints * 0.8) {
+    if (
+      this.raceActive &&
+      !this.playerState.finished &&
+      currentProgress < 0.05 &&
+      this.checkpointsPassedInLap.size > totalCheckpoints * 0.8
+    ) {
       const lapTimeMs = now - this.lapStartTime;
       this.lapStartTime = now;
       this.playerState.lastLapTime = lapTimeMs;
@@ -461,23 +520,27 @@ export class RacingEngine {
 
     this.aiControllers.forEach((ai) => {
       ai.update(delta, this.builtTrack, allRiderPositions, this.raceActive);
-      if (ai.raceState.currentLap > this.totalLaps && !ai.raceState.finished) {
+      const reachedFlagDistance =
+        ai.raceState.distanceOnTrack >= (this.totalLaps + 1) * this.builtTrack.trackLength;
+      if (this.mode !== 'practice' && reachedFlagDistance && !ai.raceState.finished) {
         ai.raceState.finished = true;
-        ai.raceState.finishTime = now - this.raceStartTime;
+        ai.raceState.finishTime = Math.max(0, now - this.raceStartTime);
       }
     });
 
-    // Update Race Positions
+    // Update Race Positions (frozen once the chequered flag has fallen, so the
+    // published classification can never reshuffle while it is on screen)
     const allRiders: RiderRaceState[] = [this.playerState, ...this.aiControllers.map((ai) => ai.raceState)];
-    allRiders.sort((a, b) => b.distanceOnTrack - a.distanceOnTrack);
-
-    allRiders.forEach((r, idx) => {
-      r.currentPosition = idx + 1;
-    });
+    if (!this.raceFinished) {
+      allRiders.sort((a, b) => b.distanceOnTrack - a.distanceOnTrack);
+      allRiders.forEach((r, idx) => {
+        r.currentPosition = idx + 1;
+      });
+    }
 
     const playerIdx = allRiders.findIndex((r) => r.rider.isPlayer);
     let gapAhead = 0;
-    if (playerIdx > 0) {
+    if (!this.raceFinished && playerIdx > 0) {
       const leaderDist = allRiders[playerIdx - 1].distanceOnTrack;
       const myDist = this.playerState.distanceOnTrack;
       const distDiff = leaderDist - myDist;
@@ -506,7 +569,10 @@ export class RacingEngine {
     );
 
     // Telemetry Callback for HUD
-    const currentLapMs = this.raceActive ? now - this.lapStartTime : 0;
+    const currentLapMs =
+      this.raceActive && !this.playerState.finished
+        ? now - this.lapStartTime
+        : this.playerState.lastLapTime ?? 0;
     this.callbacks.onTelemetryUpdate({
       speedKmh: Math.round(phys.speedKmh),
       gear: phys.gear,
@@ -568,11 +634,29 @@ export class RacingEngine {
     this.raceFinished = true;
     soundEngine.playVictoryFanfare();
 
-    const allRiders: RiderRaceState[] = [this.playerState, ...this.aiControllers.map((ai) => ai.raceState)];
-    allRiders.sort((a, b) => b.distanceOnTrack - a.distanceOnTrack);
-    allRiders.forEach((r, idx) => (r.currentPosition = idx + 1));
+    // Classify the riders at the chequered flag, then hand a snapshot to the
+    // results screen so later simulation of the riders still out on track can
+    // never reshuffle the published classification.
+    const liveRiders: RiderRaceState[] = [this.playerState, ...this.aiControllers.map((ai) => ai.raceState)];
+    liveRiders.sort((a, b) => b.distanceOnTrack - a.distanceOnTrack);
+    liveRiders.forEach((r, idx) => (r.currentPosition = idx + 1));
 
-    this.callbacks.onRaceFinish(allRiders);
+    // Gaps: finishers are measured against the winner's race time, riders still
+    // on track get their distance to the leader converted into seconds.
+    const leader = liveRiders[0];
+    liveRiders.forEach((r) => {
+      if (r === leader) {
+        r.gapToLeaderSec = 0;
+      } else if (r.finishTime != null && leader.finishTime != null) {
+        r.gapToLeaderSec = Math.max(0, (r.finishTime - leader.finishTime) / 1000);
+      } else {
+        const gapMeters = Math.max(0, leader.distanceOnTrack - r.distanceOnTrack);
+        const speedMs = Math.max(15, r.speedKmh / 3.6);
+        r.gapToLeaderSec = gapMeters / speedMs;
+      }
+    });
+
+    this.callbacks.onRaceFinish(liveRiders.map((r) => ({ ...r })));
   }
 
   public resize(width: number, height: number) {
@@ -582,6 +666,7 @@ export class RacingEngine {
 
   public dispose() {
     this.isRunning = false;
+    this.stopCountdown();
     cancelAnimationFrame(this.frameId);
     soundEngine.stopAll();
     this.builtTrack.dispose();
