@@ -181,7 +181,8 @@ export class RacingEngine {
       upgrades,
       playerSlot.position,
       playerSlot.rotationY,
-      true
+      true,
+      { tcsLevel: this.settings.tcsLevel, antiWheelie: this.settings.antiWheelie }
     );
 
     this.playerInput = {

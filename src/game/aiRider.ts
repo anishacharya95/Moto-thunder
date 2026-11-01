@@ -28,6 +28,8 @@ export class AIRiderController {
   private trackLength: number;
   private raceTime = 0;        // seconds since green flag
   private lastLapMarker = 0;   // raceTime at the start of the current lap
+  private gripLimit = 1e4;     // speed allowed by tire grip, m/s
+  private gripFrame = 0;
 
   constructor(profile: RiderProfile, track: BuiltTrack, gridSlotIndex: number) {
     this.profile = profile;
@@ -93,6 +95,8 @@ export class AIRiderController {
     this.lateralOffset = this.targetLateralOffset;
     this.raceTime = 0;
     this.lastLapMarker = 0;
+    this.gripLimit = 1e4;
+    this.gripFrame = 0;
 
     const rs = this.raceState;
     rs.distanceOnTrack = slot.progress * track.trackLength;
@@ -146,6 +150,33 @@ export class AIRiderController {
     } else {
       this.targetSpeedMs = this.topSpeedMs;
     }
+
+    // Physical cornering limit: the same tire grip and aero load the player's
+    // bike is bound by. For every point we could reach before slowing down,
+    // work out the tightest radius ahead and whether we can brake down to the
+    // speed that radius allows, then take the tightest constraint. Refreshed
+    // every third frame because sampling the curve is not free.
+    if (this.gripFrame++ % 3 === 0) {
+      const WIN = 0.0015;                    // +/- 3.4 m: the arc a bike really uses
+      const arcWindow = 2 * WIN * track.trackLength;
+      const aeroLoad = (0.5 * 1.225 * 0.085 * this.speedMs * this.speedMs) / 227; // bike + rider
+      const reach = Math.max(110, this.speedMs * 2.6);
+      let limit = this.topSpeedMs;
+      for (let i = 1; i <= 14; i++) {
+        const k = (reach * i) / 14;
+        const s = (this.progress + k / track.trackLength) % 1;
+        const ta = track.spline.getTangentAt(((s - WIN) % 1 + 1) % 1);
+        const tb = track.spline.getTangentAt((s + WIN) % 1);
+        const sev = Math.max(0, 1 - ta.dot(tb));
+        const dTheta = Math.sqrt(2 * sev);
+        const radius = dTheta > 1e-5 ? arcWindow / dTheta : 1e4;
+        const cornerV = Math.sqrt(1.4 * (9.81 + aeroLoad) * radius);
+        const reachable = Math.sqrt(cornerV * cornerV + 2 * this.maxBraking * k);
+        if (reachable < limit) limit = reachable;
+      }
+      this.gripLimit = limit;
+    }
+    if (this.gripLimit < this.targetSpeedMs) this.targetSpeedMs = this.gripLimit;
 
     // Avoidance nudge
     let avoidanceOffset = 0;
