@@ -195,7 +195,7 @@ export class RacingEngine {
       upgrades,
       playerSlot.position,
       playerSlot.rotationY,
-      true
+      settings
     );
 
     this.playerInput = {
@@ -371,6 +371,12 @@ export class RacingEngine {
 
   public setPlayerInput(input: Partial<RiderInput>) {
     this.playerInput = { ...this.playerInput, ...input };
+  }
+
+  /** Applies settings changed mid-session (e.g. rider aids in the pause menu). */
+  public applySettings(settings: PlayerSettings) {
+    this.settings = settings;
+    this.playerPhysics.applySettings(settings);
   }
 
   public toggleCamera() {

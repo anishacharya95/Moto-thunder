@@ -6,6 +6,7 @@ interface TouchControlsProps {
   controlType?: ControlType;
   steerSensitivity: number;
   invertSteering?: boolean;
+  manualGearbox?: boolean;
   onToggleInvertSteering?: () => void;
   onInputChange: (input: {
     steer?: number;
@@ -23,6 +24,7 @@ interface TouchControlsProps {
 export const TouchControls: React.FC<TouchControlsProps> = ({
   steerSensitivity,
   invertSteering = false,
+  manualGearbox = false,
   onToggleInvertSteering,
   onInputChange,
 }) => {
@@ -32,6 +34,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const [gasPressed, setGasPressed] = useState(false);
   const [brakePressed, setBrakePressed] = useState(false);
   const [tuckPressed, setTuckPressed] = useState(false);
+  const [shiftUpPressed, setShiftUpPressed] = useState(false);
+  const [shiftDownPressed, setShiftDownPressed] = useState(false);
 
   // Dedicated pointer IDs for multitouch isolation
   const leftPointerId = useRef<number | null>(null);
@@ -39,6 +43,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const gasPointerId = useRef<number | null>(null);
   const brakePointerId = useRef<number | null>(null);
   const tuckPointerId = useRef<number | null>(null);
+  const shiftUpPointerId = useRef<number | null>(null);
+  const shiftDownPointerId = useRef<number | null>(null);
 
   // Steer state tracker to support holding Left and Right cleanly
   const isSteeringLeft = useRef(false);
@@ -138,6 +144,37 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     }
   };
 
+  // --- GEAR SHIFT HANDLERS (manual gearbox) ---
+  const handleShiftDown = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    shiftDownPointerId.current = e.pointerId;
+    setShiftDownPressed(true);
+    onInputChange({ shiftDown: true });
+  };
+
+  const handleShiftDownUp = (e: React.PointerEvent) => {
+    if (shiftDownPointerId.current === e.pointerId) {
+      shiftDownPointerId.current = null;
+      setShiftDownPressed(false);
+      onInputChange({ shiftDown: false });
+    }
+  };
+
+  const handleShiftUp = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    shiftUpPointerId.current = e.pointerId;
+    setShiftUpPressed(true);
+    onInputChange({ shiftUp: true });
+  };
+
+  const handleShiftUpUp = (e: React.PointerEvent) => {
+    if (shiftUpPointerId.current === e.pointerId) {
+      shiftUpPointerId.current = null;
+      setShiftUpPressed(false);
+      onInputChange({ shiftUp: false });
+    }
+  };
+
   // --- KEYBOARD CONTROLS (WASD, Arrows, Space, Shift) ---
   useEffect(() => {
     const keysDown = new Set<string>();
@@ -153,12 +190,16 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       const throttle = keysDown.has('KeyW') || keysDown.has('ArrowUp') ? 1.0 : 0;
       const brake = keysDown.has('KeyS') || keysDown.has('ArrowDown') || keysDown.has('Space') ? 1.0 : 0;
       const tuck = keysDown.has('ShiftLeft') || keysDown.has('ShiftRight');
+      const shiftUp = keysDown.has('KeyE');
+      const shiftDown = keysDown.has('KeyQ');
 
       setLeftPressed(rawSteer < 0);
       setRightPressed(rawSteer > 0);
       setGasPressed(throttle > 0);
       setBrakePressed(brake > 0);
       setTuckPressed(tuck);
+      setShiftUpPressed(shiftUp);
+      setShiftDownPressed(shiftDown);
 
       onInputChange({
         steer: steer * steerSensitivity,
@@ -166,6 +207,8 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
         frontBrake: brake,
         rearBrake: brake * 0.8,
         tuckIn: tuck,
+        shiftUp,
+        shiftDown,
       });
     };
 
@@ -189,7 +232,9 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       setGasPressed(false);
       setBrakePressed(false);
       setTuckPressed(false);
-      onInputChange({ steer: 0, throttle: 0, frontBrake: 0, rearBrake: 0, tuckIn: false });
+      setShiftUpPressed(false);
+      setShiftDownPressed(false);
+      onInputChange({ steer: 0, throttle: 0, frontBrake: 0, rearBrake: 0, tuckIn: false, shiftUp: false, shiftDown: false });
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -277,6 +322,45 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
       {/* 2. BOTTOM-RIGHT: BRAKE AND GAS ACTION BUTTONS            */}
       {/* ======================================================== */}
       <div className="absolute bottom-4 right-4 pointer-events-auto flex items-end gap-3">
+        {/* Left Sub-column: Gear Shift (manual gearbox only) */}
+        {manualGearbox && (
+          <div className="flex flex-col gap-2.5">
+            {/* SHIFT UP BUTTON */}
+            <button
+              type="button"
+              onPointerDown={handleShiftUp}
+              onPointerUp={handleShiftUpUp}
+              onPointerCancel={handleShiftUpUp}
+              className={`w-14 h-10 sm:w-16 sm:h-11 rounded-xl flex items-center justify-center gap-1 transition-all duration-75 active:scale-95 touch-none shadow-lg border ${
+                shiftUpPressed
+                  ? 'bg-amber-400 text-black border-amber-200 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
+                  : 'bg-zinc-950/75 border-amber-600/60 text-amber-300 hover:border-amber-400'
+              }`}
+              aria-label="Shift Up"
+            >
+              <ChevronUp className={`w-4 h-4 ${shiftUpPressed ? 'text-black' : 'text-amber-400'}`} />
+              <span className="text-[10px] font-bold uppercase tracking-wider">UP</span>
+            </button>
+
+            {/* SHIFT DOWN BUTTON */}
+            <button
+              type="button"
+              onPointerDown={handleShiftDown}
+              onPointerUp={handleShiftDownUp}
+              onPointerCancel={handleShiftDownUp}
+              className={`w-14 h-10 sm:w-16 sm:h-11 rounded-xl flex items-center justify-center gap-1 transition-all duration-75 active:scale-95 touch-none shadow-lg border ${
+                shiftDownPressed
+                  ? 'bg-amber-400 text-black border-amber-200 shadow-[0_0_15px_rgba(251,191,36,0.8)]'
+                  : 'bg-zinc-950/75 border-amber-600/60 text-amber-300 hover:border-amber-400'
+              }`}
+              aria-label="Shift Down"
+            >
+              <ChevronDown className={`w-4 h-4 ${shiftDownPressed ? 'text-black' : 'text-amber-400'}`} />
+              <span className="text-[10px] font-bold uppercase tracking-wider">DN</span>
+            </button>
+          </div>
+        )}
+
         {/* Left Sub-column: Aero Tuck & Brake */}
         <div className="flex flex-col gap-2.5">
           {/* Aero Tuck-In Button */}

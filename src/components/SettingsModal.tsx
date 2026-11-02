@@ -105,6 +105,85 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Rider Aids & Gearbox */}
+          <div>
+            <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider mb-3">
+              <Gauge className="w-4 h-4" />
+              <span>Rider Aids & Gearbox</span>
+            </div>
+
+            {/* Traction Control */}
+            <div className="flex items-center justify-between bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800 mb-2">
+              <div className="flex flex-col">
+                <span className="text-xs text-zinc-300">Traction Control (TCS)</span>
+                <span className="text-[10px] text-zinc-500">Limits rear-wheel spin out of corners</span>
+              </div>
+              <div className="flex gap-1">
+                {([
+                  { level: 0, label: 'OFF' },
+                  { level: 1, label: 'MED' },
+                  { level: 2, label: 'FULL' },
+                ]).map((tcs) => (
+                  <button
+                    key={tcs.level}
+                    onClick={() => update({ tcsLevel: tcs.level })}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold uppercase transition-all ${
+                      settings.tcsLevel === tcs.level
+                        ? 'bg-amber-500 text-black'
+                        : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {tcs.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Anti-Wheelie */}
+            <div className="flex items-center justify-between bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800 mb-2">
+              <div className="flex flex-col">
+                <span className="text-xs text-zinc-300">Anti-Wheelie Control</span>
+                <span className="text-[10px] text-zinc-500">Keeps the front wheel down under hard acceleration</span>
+              </div>
+              <button
+                onClick={() => update({ antiWheelie: !settings.antiWheelie })}
+                className={`px-3 py-1 rounded-lg text-xs font-bold uppercase transition-all ${
+                  settings.antiWheelie
+                    ? 'bg-emerald-500 text-black'
+                    : 'bg-zinc-800 text-zinc-400'
+                }`}
+              >
+                {settings.antiWheelie ? 'ON' : 'OFF'}
+              </button>
+            </div>
+
+            {/* Gearbox */}
+            <div className="flex items-center justify-between bg-zinc-900/60 p-3 rounded-2xl border border-zinc-800">
+              <div className="flex flex-col">
+                <span className="text-xs text-zinc-300">Gearbox</span>
+                <span className="text-[10px] text-zinc-500">Manual: use UP/DN buttons or Q / E keys</span>
+              </div>
+              <div className="flex gap-1">
+                {([
+                  { manual: false, label: 'AUTO' },
+                  { manual: true, label: 'MANUAL' },
+                ]).map((gb) => (
+                  <button
+                    key={gb.label}
+                    onClick={() => update({ manualGearbox: gb.manual })}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold uppercase transition-all ${
+                      settings.manualGearbox === gb.manual
+                        ? 'bg-amber-500 text-black'
+                        : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
+                    }`}
+                  >
+                    {gb.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {/* Graphics Quality */}
           <div>
             <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider mb-3">

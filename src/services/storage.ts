@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS: PlayerSettings = {
   racingLineAssist: true,
   tcsLevel: 1,
   antiWheelie: true,
+  manualGearbox: false,
   soundVolume: 0.8,
   engineVolume: 0.85,
   fxVolume: 0.75,

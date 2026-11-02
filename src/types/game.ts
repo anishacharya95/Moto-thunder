@@ -137,8 +137,9 @@ export interface PlayerSettings {
   invertSteering: boolean; // false = standard (Left=Left, Right=Right), true = inverted
   autoBrakeAssist: boolean;
   racingLineAssist: boolean;
-  tcsLevel: number; // Traction Control 0, 1, 2
+  tcsLevel: number; // Traction Control 0 (off), 1 (medium), 2 (full)
   antiWheelie: boolean;
+  manualGearbox: boolean; // false = automatic quickshifter, true = manual shift buttons / Q-E keys
   soundVolume: number;
   engineVolume: number;
   fxVolume: number;

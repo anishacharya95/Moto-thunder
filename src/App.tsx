@@ -83,6 +83,8 @@ export default function App() {
 
   const handleUpdateSettings = (newSettings: PlayerSettings) => {
     handleUpdateSaveData((prev) => ({ ...prev, settings: newSettings }));
+    // Rider aids / gearbox toggles apply immediately to a live race session
+    engineRef.current?.applySettings(newSettings);
   };
 
   // Launch a race
@@ -301,6 +303,7 @@ export default function App() {
             controlType={saveData.settings.controls}
             steerSensitivity={saveData.settings.steerSensitivity}
             invertSteering={saveData.settings.invertSteering}
+            manualGearbox={saveData.settings.manualGearbox}
             onToggleInvertSteering={() => {
               handleUpdateSettings({
                 ...saveData.settings,
