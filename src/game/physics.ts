@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { BikeStats, BikeUpgrades, PlayerSettings } from '../types/game';
+import { RaceConsumables } from './consumables';
 
 export interface RiderInput {
   throttle: number;      // 0 to 1
@@ -71,6 +72,10 @@ export class MotorcyclePhysics {
   private aeroBonus: number;
   private staticFront: number;      // N static front-axle load
 
+  // Race consumables: fuel load (adds to mass), tire wear (removes grip)
+  // and brake temperature (fades brake power) — shared model with the AI.
+  public consumables = new RaceConsumables();
+
   // Frame-to-frame transients
   private prevLongAccel = 0;        // m/s^2 measured chassis acceleration
   private prevMechFront = 0;        // N front load before aero share
@@ -108,7 +113,8 @@ export class MotorcyclePhysics {
     // fits inside the friction circle, while combined slip and lean falloff
     // do the limiting that used to be unlimited.
     this.effectiveGrip = 1.6 * tireBonus;
-    this.staticFront = stats.weight * GRAVITY * STATIC_FRONT_SHARE;
+    this.staticFront =
+      (stats.weight + this.consumables.fuelKg) * GRAVITY * STATIC_FRONT_SHARE;
 
     this.state = {
       position: initialPos.clone(),
@@ -139,7 +145,11 @@ export class MotorcyclePhysics {
 
   public update(input: RiderInput, delta: number, trackInfo?: { distToCenter: number; trackHalfWidth: number }): void {
     const dt = Math.min(delta, 0.05);
-    const m = this.stats.weight;
+    // Wet mass: the fuel load is part of the bike until it is burned off,
+    // so an early-race bike is heavier and transfers load harder than a
+    // light one at the end of the race.
+    const m = this.stats.weight + this.consumables.fuelKg;
+    this.staticFront = m * GRAVITY * STATIC_FRONT_SHARE;
     const v = this.state.speedMs;
 
     // 1. Surface check (Track, Kerb, Runoff Gravel)
@@ -194,7 +204,9 @@ export class MotorcyclePhysics {
     // surface (kerbs, gravel).
     const leanRatio = Math.min(Math.abs(this.state.roll) / MAX_LEAN, 1);
     const leanGrip = 1 - 0.14 * leanRatio * leanRatio;
-    const mu = this.effectiveGrip * surfaceGrip * leanGrip;
+    // Worn tires shave grip off the whole friction circle.
+    const mu =
+      this.effectiveGrip * surfaceGrip * leanGrip * this.consumables.gripAvg;
     const budgetAccel = (mu * normalTotal) / m; // m/s^2 of combined tire force
 
     // 5. Steering with a countersteering transient: at speed, initiating a
@@ -235,7 +247,12 @@ export class MotorcyclePhysics {
     this.updateGearbox(input, dt, v);
 
     const gearPowerFactor = [0, 1.0, 0.95, 0.91, 0.88, 0.86, 0.84][this.state.gear];
-    let driveAccel = input.throttle * this.effectiveAccel * gearPowerFactor * surfaceGrip;
+    let driveAccel =
+      input.throttle *
+      this.effectiveAccel *
+      gearPowerFactor *
+      surfaceGrip *
+      this.consumables.gripRear;
     if (v >= this.effectiveTopSpeed) driveAccel = 0;
     // Short-gear launch punch: with the aids disabled this is what lifts the
     // front wheel out of slow corners.
@@ -255,10 +272,13 @@ export class MotorcyclePhysics {
       driveForce = Math.min(driveForce, tcCap * rearGrip * m);
     }
 
-    // 7. Braking demand (front/rear split as before)
+    // 7. Braking demand (front/rear split as before). Hot brakes fade:
+    // the same lever input produces less deceleration as rotors heat up.
     const brakeAccel =
-      input.frontBrake * this.effectiveBraking * 0.75 * surfaceGrip +
-      input.rearBrake * this.effectiveBraking * 0.25 * surfaceGrip;
+      (input.frontBrake * this.effectiveBraking * 0.75 +
+        input.rearBrake * this.effectiveBraking * 0.25) *
+      surfaceGrip *
+      this.consumables.brakeScale;
     const tireLongDemand = driveForce / m - brakeAccel;
 
     // 8. Friction circle: braking/acceleration and cornering share one grip
@@ -321,6 +341,18 @@ export class MotorcyclePhysics {
       this.state.skidRatio = Math.max(skidTarget, this.state.skidRatio - dt * 4);
     }
 
+    // 10b. Race consumables: burn fuel under load, scrub tires against the
+    // grip circle just used, and heat the brakes under brake demand.
+    this.consumables.update(dt, {
+      throttle: input.throttle,
+      brake: input.frontBrake * 0.75 + input.rearBrake * 0.25,
+      speedMs: v,
+      latUtil: Math.min(Math.abs(latDemand) / budgetAccel, 1),
+      longUtil: longUseRaw,
+      leanRatio,
+      skidRatio: this.state.skidRatio,
+    });
+
     // 11. Lean angle from the corner the rider is actually requesting
     // (theta = arctan(v * omega / g), clamped to the MotoGP lean limit)
     const latAccelCmd = v * turnRateCmd;
@@ -358,7 +390,7 @@ export class MotorcyclePhysics {
    * so the dramatic angles only appear at lower speeds where they belong.
    */
   private computePitch(mechFront: number, downforce: number): number {
-    const staticTotal = this.stats.weight * GRAVITY;
+    const staticTotal = (this.stats.weight + this.consumables.fuelKg) * GRAVITY;
     const mechRatio = mechFront / this.staticFront; // 1 = static, 0 = airborne
     const frontWithAero = mechFront + downforce * 0.5;
     const rearWithAero = staticTotal - mechFront + downforce * 0.5;
@@ -426,6 +458,8 @@ export class MotorcyclePhysics {
   }
 
   public setPosition(pos: THREE.Vector3, heading: number) {
+    // A restart is a fresh race: full tank, fresh tires, cold brakes.
+    this.consumables.reset();
     this.state.position.copy(pos);
     this.state.heading = heading;
     this.state.velocity.set(0, 0, 0);

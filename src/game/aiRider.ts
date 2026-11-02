@@ -3,6 +3,7 @@ import { RiderProfile, RiderRaceState } from '../types/game';
 import { MOTORCYCLES } from '../data/bikes';
 import { buildMotorcycle, BuiltBike } from './bikeBuilder';
 import { BuiltTrack } from './trackBuilder';
+import { RaceConsumables, FUEL_CAPACITY_KG } from './consumables';
 
 export class AIRiderController {
   public profile: RiderProfile;
@@ -30,6 +31,10 @@ export class AIRiderController {
   private maxAccel: number;
   private maxBraking: number;
   private targetSpeedMs: number = 0;
+
+  // Same consumables model as the player: fuel burn, tire wear and brake
+  // fade apply to the AI over the race distance too, keeping parity.
+  public consumables = new RaceConsumables();
 
   constructor(profile: RiderProfile, track: BuiltTrack, gridSlotIndex: number) {
     this.profile = profile;
@@ -92,6 +97,8 @@ export class AIRiderController {
 
     this.lateralOffset = (Math.random() - 0.5) * 4.5;
     this.targetLateralOffset = this.lateralOffset;
+
+    this.consumables.reset();
 
     this.completedLaps = 0;
     this.startLinePending = true;
@@ -180,12 +187,24 @@ export class AIRiderController {
     const turnSeverity = Math.max(0, 1.0 - tang1.dot(tang2));
     const isHeavyCorner = turnSeverity > 0.035;
 
-    if (isHeavyCorner) {
-      const cornerSpeedFactor = Math.max(0.35, 1.0 - turnSeverity * 6.0);
-      this.targetSpeedMs = this.topSpeedMs * cornerSpeedFactor;
-    } else {
-      this.targetSpeedMs = this.topSpeedMs;
-    }
+    // Corner speed capped by the same tire-grip circle the player rides on:
+    // v = sqrt(aLatMax * radius) for the curvature ahead. Severity measures
+    // tangent rotation over a fixed progress window, so the curve radius is
+    // that window length divided by the turn angle; a straight yields a
+    // radius so large the straight-line top speed wins instead. aLatMax
+    // includes the rider's skill and current tire condition, so worn tires
+    // slow the AI exactly as they slow the player.
+    const severityWindowM = 0.035 * track.trackLength;
+    const turnAngle = Math.sqrt(2 * Math.max(turnSeverity, 1e-6));
+    const radius = severityWindowM / turnAngle;
+    const skill = this.profile.skill;
+    const aLatMax = 13.6 * (0.82 + 0.28 * skill) * this.consumables.gripAvg;
+    const gripLimit = Math.sqrt(aLatMax * radius);
+    // Never let the grip math talk the rider into a crawl.
+    this.targetSpeedMs = Math.max(
+      this.topSpeedMs * 0.25,
+      Math.min(this.topSpeedMs, gripLimit)
+    );
 
     // Avoidance nudge
     let avoidanceOffset = 0;
@@ -206,12 +225,31 @@ export class AIRiderController {
       dt
     );
 
-    // Speed acceleration / braking
-    if (this.speedMs < this.targetSpeedMs) {
-      this.speedMs = Math.min(this.targetSpeedMs, this.speedMs + this.maxAccel * dt);
+    // Speed acceleration / braking — scaled by consumables: a nearly empty
+    // bike is lighter (slightly faster), worn tires reduce drive, and hot
+    // brakes cut stopping power exactly like the player's.
+    const fuelFactor =
+      1 - 0.05 * (1 - this.consumables.fuelKg / FUEL_CAPACITY_KG);
+    const accelNow = this.maxAccel * this.consumables.gripRear * fuelFactor;
+    const brakeNow =
+      this.maxBraking * this.consumables.gripFront * this.consumables.brakeScale;
+    const braking = this.speedMs > this.targetSpeedMs;
+    if (!braking) {
+      this.speedMs = Math.min(this.targetSpeedMs, this.speedMs + accelNow * dt);
     } else {
-      this.speedMs = Math.max(this.targetSpeedMs, this.speedMs - this.maxBraking * dt);
+      this.speedMs = Math.max(this.targetSpeedMs, this.speedMs - brakeNow * dt);
     }
+
+    // Wear tires against the workload of this frame and cool/heat the brakes.
+    this.consumables.update(dt, {
+      throttle: braking ? 0 : 1,
+      brake: braking ? 1 : 0,
+      speedMs: this.speedMs,
+      latUtil: isHeavyCorner ? 0.7 : 0.08,
+      longUtil: braking ? 0.8 : 0.45,
+      leanRatio: Math.min(Math.abs(this.leanAngle) / 1.11, 1),
+      skidRatio: 0,
+    });
 
     // Advance along spline
     const distanceStep = this.speedMs * dt;

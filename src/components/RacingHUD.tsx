@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { CircuitDefinition, TelemetryData } from '../types/game';
 import { Camera, Pause } from 'lucide-react';
+import { FUEL_CAPACITY_KG } from '../game/consumables';
 
 interface RacingHUDProps {
   telemetry: TelemetryData;
@@ -37,6 +38,32 @@ export const RacingHUD: React.FC<RacingHUDProps> = ({
 
   const rpmPercent = Math.min(100, Math.max(0, ((telemetry.rpm - 4000) / 14500) * 100));
   const isRedline = telemetry.rpm >= 17400;
+
+  // Race consumables readout (fuel, tire condition, brake temperature)
+  const fuelPct =
+    telemetry.fuelKg !== undefined
+      ? Math.min(100, Math.max(0, (telemetry.fuelKg / FUEL_CAPACITY_KG) * 100))
+      : null;
+  const tireFrontPct =
+    telemetry.tireWearFront !== undefined
+      ? Math.min(100, Math.max(0, (1 - telemetry.tireWearFront) * 100))
+      : null;
+  const tireRearPct =
+    telemetry.tireWearRear !== undefined
+      ? Math.min(100, Math.max(0, (1 - telemetry.tireWearRear) * 100))
+      : null;
+  const brakePct =
+    telemetry.brakeTemp !== undefined
+      ? Math.min(100, Math.max(0, telemetry.brakeTemp * 100))
+      : null;
+  // Condition bars: healthy = cyan, warning = amber, critical = rose.
+  // Brake temp inverts it: cold = cyan, glowing = rose.
+  const conditionColor = (pct: number, invert: boolean) => {
+    const level = invert ? 100 - pct : pct;
+    if (level < 35) return 'bg-rose-500';
+    if (level < 60) return 'bg-amber-400';
+    return 'bg-cyan-400';
+  };
 
   // Dynamically compute full circuit bounding box & smooth path so the ENTIRE track is visible
   const mapData = useMemo(() => {
@@ -326,6 +353,49 @@ export const RacingHUD: React.FC<RacingHUDProps> = ({
           {telemetry.isCrouched && (
             <div className="mt-1 px-2 py-0.2 rounded-full bg-cyan-950/80 border border-cyan-400/50 text-[7px] sm:text-[8px] font-bold uppercase tracking-widest text-cyan-300">
               ⚡ AERO TUCK
+            </div>
+          )}
+
+          {/* Race consumables: fuel, tire condition, brake temperature */}
+          {(fuelPct !== null || tireFrontPct !== null || brakePct !== null) && (
+            <div className="mt-1 flex items-center justify-between gap-2 px-2 py-0.5 rounded bg-zinc-950/80 border border-zinc-800 text-[7px] sm:text-[8px] font-bold uppercase tracking-widest">
+              <span className={fuelPct !== null && fuelPct < 15 ? 'text-rose-400' : 'text-amber-400'}>
+                FUEL {fuelPct !== null ? Math.round(fuelPct) : '--'}%
+              </span>
+
+              <span className="flex items-center gap-1 text-zinc-400">
+                <span>TYR</span>
+                {tireFrontPct !== null && (
+                  <span className="w-6 h-1 bg-zinc-800 rounded-full overflow-hidden" title="Front tire">
+                    <span
+                      className={`block h-full ${conditionColor(tireFrontPct, false)}`}
+                      style={{ width: `${tireFrontPct}%` }}
+                    />
+                  </span>
+                )}
+                {tireRearPct !== null && (
+                  <span className="w-6 h-1 bg-zinc-800 rounded-full overflow-hidden" title="Rear tire">
+                    <span
+                      className={`block h-full ${conditionColor(tireRearPct, false)}`}
+                      style={{ width: `${tireRearPct}%` }}
+                    />
+                  </span>
+                )}
+              </span>
+
+              <span className="flex items-center gap-1">
+                <span className={brakePct !== null && brakePct > 55 ? 'text-rose-400 animate-pulse' : 'text-zinc-400'}>
+                  BRK{brakePct !== null && brakePct > 55 ? '!' : ''}
+                </span>
+                {brakePct !== null && (
+                  <span className="w-6 h-1 bg-zinc-800 rounded-full overflow-hidden">
+                    <span
+                      className={`block h-full ${conditionColor(brakePct, true)}`}
+                      style={{ width: `${brakePct}%` }}
+                    />
+                  </span>
+                )}
+              </span>
             </div>
           )}
         </div>

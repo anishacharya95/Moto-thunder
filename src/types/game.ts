@@ -129,6 +129,11 @@ export interface TelemetryData {
   isCrouched: boolean;
   playerPos?: { x: number; z: number };
   splineProgress?: number;
+  // Race consumables (present once the engine reports them)
+  fuelKg?: number;          // kg remaining in the tank
+  tireWearFront?: number;   // 0 = fresh, 1 = worn out
+  tireWearRear?: number;    // 0 = fresh, 1 = worn out
+  brakeTemp?: number;       // 0 = cold, 1 = glowing hot
 }
 
 export interface PlayerSettings {

@@ -595,6 +595,10 @@ export class RacingEngine {
       isCrouched: this.playerInput.tuckIn,
       playerPos: { x: phys.position.x, z: phys.position.z },
       splineProgress: closestInfo.progress,
+      fuelKg: this.playerPhysics.consumables.fuelKg,
+      tireWearFront: this.playerPhysics.consumables.wearFront,
+      tireWearRear: this.playerPhysics.consumables.wearRear,
+      brakeTemp: this.playerPhysics.consumables.brakeTemp,
     });
   }
 
