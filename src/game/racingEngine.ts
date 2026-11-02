@@ -25,6 +25,12 @@ export interface RaceEngineCallbacks {
   onTelemetryUpdate: (data: TelemetryData) => void;
 }
 
+/** Physics timestep clamp: prevents explosions after a long hitch. */
+const PHYSICS_MAX_DELTA = 0.05;
+/** Race-clock clamp: keeps lap timing close to real time on slow devices
+ *  without letting a background-tab suspension add minutes to a lap. */
+const RACE_CLOCK_MAX_DELTA = 0.25;
+
 export class RacingEngine {
   private container: HTMLElement;
   private renderer: THREE.WebGLRenderer;
@@ -63,9 +69,23 @@ export class RacingEngine {
   private raceActive = false;
   private raceFinished = false;
 
-  private countdownTimer = 0;
-  private raceStartTime = 0;
-  private lapStartTime = 0;
+  // Countdown: driven from the game loop (pauses with the race, cannot leak
+  // past dispose(), and cannot double-start on restart()).
+  // stage 0 = idle, 1-5 = red lights, 6 = GO, 7 = hold, 8 = lights out, -1 = done
+  private countdownStage = -1;
+  private countdownElapsedMs = 0;
+
+  // Race timing: accumulated race time only advances while the race is active,
+  // so paused time never inflates lap times or finish times.
+  private raceTimeMs = 0;
+  private playerLapStartMs = 0;
+  private playerCompletedLaps = 0;
+  private playerStartLinePending = true;
+  private playerWentOffTrack = false;
+
+  // Player progress tracking (monotonic, wrap-aware)
+  private lastProgress = 0;
+  private playerUnwrappedProgress = 0;
   private lastCheckpointIndex = 0;
   private checkpointsPassedInLap = new Set<number>();
 
@@ -186,6 +206,22 @@ export class RacingEngine {
       tuckIn: false,
     };
 
+    // Progress tracking starts from the grid slot: the grid sits behind the
+    // start/finish line, so initial race distance is negative (meters to go
+    // before reaching the line). All riders share this same origin.
+    this.lastProgress = playerSlot.progress;
+    this.playerUnwrappedProgress = playerSlot.progress;
+    this.playerCompletedLaps = 0;
+    this.playerStartLinePending = true;
+    this.playerLapStartMs = 0;
+    this.raceTimeMs = 0;
+    this.playerWentOffTrack = false;
+    this.countdownStage = -1;
+    this.countdownElapsedMs = 0;
+    this.raceFinished = false;
+    this.checkpointsPassedInLap.clear();
+    this.lastCheckpointIndex = this.checkpointIndexAt(playerSlot.progress);
+
     this.playerState = {
       rider: {
         id: 'player',
@@ -197,8 +233,8 @@ export class RacingEngine {
         skill: 1.0,
         aggressiveness: 1.0,
       },
-      distanceOnTrack: 0,
-      splineProgress: 0,
+      distanceOnTrack: (playerSlot.progress - 1.0) * this.builtTrack.trackLength,
+      splineProgress: playerSlot.progress,
       currentLap: 1,
       currentPosition: 1,
       speedKmh: 0,
@@ -225,7 +261,7 @@ export class RacingEngine {
         const gridSlotIdx = idx + 1;
         const aiController = new AIRiderController(
           {
-            id: `ai_${idx}`,
+            id: aiProfile.id,
             name: aiProfile.name,
             nationality: aiProfile.nationality,
             number: aiProfile.number,
@@ -280,7 +316,7 @@ export class RacingEngine {
 
     if (this.mode === 'practice') {
       this.raceActive = true;
-      this.lapStartTime = performance.now();
+      this.playerLapStartMs = 0;
     } else {
       this.startCountdown();
     }
@@ -288,30 +324,49 @@ export class RacingEngine {
     this.startLoop();
   }
 
-  private startCountdown() {
-    this.countdownTimer = 0;
-    this.builtTrack.setStartLightsCount(0, false);
+  private checkpointIndexAt(progress: number): number {
+    const total = this.builtTrack.checkpoints.length;
+    if (total === 0) return 0;
+    return Math.floor(progress * total) % total;
+  }
 
-    const countdownInterval = window.setInterval(() => {
-      this.countdownTimer++;
-      if (this.countdownTimer <= 5) {
-        this.builtTrack.setStartLightsCount(this.countdownTimer, false);
-        soundEngine.playCountdownBeep(false);
-        this.callbacks.onCountdownUpdate(this.countdownTimer, false, `${this.countdownTimer}`);
-      } else if (this.countdownTimer === 6) {
-        this.builtTrack.setStartLightsCount(0, true);
-        soundEngine.playCountdownBeep(true);
-        this.callbacks.onCountdownUpdate(0, true, 'GO!');
-        this.raceActive = true;
-        this.raceStartTime = performance.now();
-        this.lapStartTime = performance.now();
-        this.callbacks.onRaceStart();
-      } else if (this.countdownTimer >= 8) {
-        this.builtTrack.setStartLightsCount(0, false);
-        this.callbacks.onCountdownUpdate(0, false, '');
-        window.clearInterval(countdownInterval);
-      }
-    }, 1000);
+  /**
+   * Arms the start-lights countdown. The countdown itself is advanced by
+   * updateCountdown() inside the game loop, so it pauses with the race and
+   * stops automatically when the engine is disposed.
+   */
+  private startCountdown() {
+    this.countdownElapsedMs = 0;
+    this.countdownStage = 0;
+    this.raceActive = false;
+    this.raceFinished = false;
+    this.builtTrack.setStartLightsCount(0, false);
+  }
+
+  private updateCountdown(delta: number) {
+    if (this.countdownStage < 0) return;
+
+    this.countdownElapsedMs += delta * 1000;
+    const stage = Math.floor(this.countdownElapsedMs / 1000);
+    if (stage <= this.countdownStage) return;
+    this.countdownStage = stage;
+
+    if (stage <= 5) {
+      this.builtTrack.setStartLightsCount(stage, false);
+      soundEngine.playCountdownBeep(false);
+      this.callbacks.onCountdownUpdate(stage, false, `${stage}`);
+    } else if (stage === 6) {
+      this.builtTrack.setStartLightsCount(0, true);
+      soundEngine.playCountdownBeep(true);
+      this.callbacks.onCountdownUpdate(0, true, 'GO!');
+      this.raceActive = true;
+      this.callbacks.onRaceStart();
+    } else if (stage >= 8) {
+      this.builtTrack.setStartLightsCount(0, false);
+      this.callbacks.onCountdownUpdate(0, false, '');
+      this.countdownStage = -1;
+    }
+    // stage 7: lights stay green while the field accelerates away
   }
 
   public setPlayerInput(input: Partial<RiderInput>) {
@@ -333,38 +388,73 @@ export class RacingEngine {
   }
 
   public restart() {
+    // Restarting always resumes the simulation (the pause menu and the
+    // post-race screen both route through here).
+    this.isPaused = false;
+    soundEngine.resume();
+
+    // Reset all race clocks and progression
+    this.raceTimeMs = 0;
+    this.playerLapStartMs = 0;
+    this.playerCompletedLaps = 0;
+    this.playerStartLinePending = true;
+    this.playerWentOffTrack = false;
+    this.countdownStage = -1;
+    this.countdownElapsedMs = 0;
+    this.raceFinished = false;
+    this.raceActive = false;
+
     const playerSlot = this.builtTrack.gridSlots[0];
     this.playerPhysics.setPosition(playerSlot.position, playerSlot.rotationY);
     this.playerBike.root.position.copy(playerSlot.position);
     this.playerBike.root.rotation.set(0, -playerSlot.rotationY, 0);
     this.cameraManager.reset();
 
-    this.playerState.distanceOnTrack = 0;
-    this.playerState.splineProgress = playerSlot.progress;
-    this.playerState.currentLap = 1;
-    this.playerState.currentLapTime = 0;
-    this.playerState.finished = false;
-    this.raceActive = false;
-    this.raceFinished = false;
+    this.lastProgress = playerSlot.progress;
+    this.playerUnwrappedProgress = playerSlot.progress;
+    this.lastCheckpointIndex = this.checkpointIndexAt(playerSlot.progress);
     this.checkpointsPassedInLap.clear();
 
+    // Neutral inputs so no throttle/brake persists into the new race
+    this.playerInput = {
+      throttle: 0,
+      frontBrake: 0,
+      rearBrake: 0,
+      steer: 0,
+      tuckIn: false,
+    };
+
+    Object.assign(this.playerState, {
+      distanceOnTrack: (playerSlot.progress - 1.0) * this.builtTrack.trackLength,
+      splineProgress: playerSlot.progress,
+      currentLap: 1,
+      currentPosition: 1,
+      speedKmh: 0,
+      gear: 1,
+      rpm: 4200,
+      leanAngleRad: 0,
+      isCrouched: false,
+      isOffTrack: false,
+      isDrafting: false,
+      lastLapTime: null,
+      bestLapTime: null,
+      currentLapTime: 0,
+      sectorTimes: [],
+      finished: false,
+      finishTime: null,
+      gapToLeaderSec: 0,
+      gapToAheadSec: 0,
+    });
+
     this.aiControllers.forEach((ai, idx) => {
-      const slot = this.builtTrack.gridSlots[idx + 1] || this.builtTrack.gridSlots[0];
-      ai.bike.root.position.copy(slot.position);
-      ai.bike.root.rotation.set(0, -slot.rotationY, 0);
-      ai.speedMs = 0;
-      ai.progress = slot.progress;
-      ai.raceState.distanceOnTrack = 0;
-      ai.raceState.splineProgress = slot.progress;
-      ai.raceState.currentLap = 1;
-      ai.raceState.finished = false;
+      ai.reset(this.builtTrack, idx + 1);
     });
 
     if (this.mode !== 'practice') {
       this.startCountdown();
     } else {
       this.raceActive = true;
-      this.lapStartTime = performance.now();
+      this.playerLapStartMs = 0;
     }
   }
 
@@ -375,11 +465,13 @@ export class RacingEngine {
     const tick = (now: number) => {
       if (!this.isRunning) return;
 
-      const delta = Math.min((now - this.lastTime) / 1000, 0.05);
+      const rawDelta = (now - this.lastTime) / 1000;
+      const delta = Math.min(rawDelta, PHYSICS_MAX_DELTA);
+      const clockDelta = Math.min(rawDelta, RACE_CLOCK_MAX_DELTA);
       this.lastTime = now;
 
       if (!this.isPaused) {
-        this.updateGame(delta, now);
+        this.updateGame(delta, clockDelta);
       }
 
       this.renderer.render(this.scene, this.cameraManager.camera);
@@ -389,7 +481,10 @@ export class RacingEngine {
     this.frameId = requestAnimationFrame(tick);
   }
 
-  private updateGame(delta: number, now: number) {
+  private updateGame(delta: number, clockDelta: number) {
+    // 1. Start-lights countdown (pausable, leak-free)
+    this.updateCountdown(clockDelta);
+
     const playerPos = this.playerPhysics.state.position;
     const closestInfo = this.getClosestSplineInfo(playerPos);
 
@@ -397,6 +492,9 @@ export class RacingEngine {
     this.playerPhysics.state.position.y = closestInfo.roadY;
 
     if (this.raceActive) {
+      // Advance the race clock before physics so this frame's lap crossing
+      // is timed against the freshest race time.
+      this.raceTimeMs += clockDelta * 1000;
       this.playerPhysics.update(this.playerInput, delta, {
         distToCenter: closestInfo.distance,
         trackHalfWidth: this.builtTrack.getTrackWidth() * 0.5,
@@ -405,6 +503,10 @@ export class RacingEngine {
 
     const phys = this.playerPhysics.state;
     phys.position.y = closestInfo.roadY;
+
+    if (this.raceActive && phys.isOffTrack) {
+      this.playerWentOffTrack = true;
+    }
 
     // Apply 3D position & animation
     this.playerBike.root.position.set(phys.position.x, phys.position.y, phys.position.z);
@@ -419,70 +521,35 @@ export class RacingEngine {
     );
 
     // Lap & Checkpoint Validation
-    const currentProgress = closestInfo.progress;
-    this.playerState.splineProgress = currentProgress;
-    this.playerState.distanceOnTrack = (this.playerState.currentLap - 1) * this.builtTrack.trackLength + currentProgress * this.builtTrack.trackLength;
+    this.updatePlayerRaceProgress(closestInfo.progress);
+
     this.playerState.speedKmh = phys.speedKmh;
     this.playerState.gear = phys.gear;
     this.playerState.rpm = phys.rpm;
     this.playerState.leanAngleRad = phys.roll;
     this.playerState.isOffTrack = phys.isOffTrack;
     this.playerState.isCrouched = this.playerInput.tuckIn;
-
-    const totalCheckpoints = this.builtTrack.checkpoints.length;
-    const currentCpIdx = Math.floor(currentProgress * totalCheckpoints);
-    if (currentCpIdx !== this.lastCheckpointIndex) {
-      this.checkpointsPassedInLap.add(currentCpIdx);
-      this.lastCheckpointIndex = currentCpIdx;
-    }
-
-    if (this.raceActive && currentProgress < 0.05 && this.checkpointsPassedInLap.size > totalCheckpoints * 0.8) {
-      const lapTimeMs = now - this.lapStartTime;
-      this.lapStartTime = now;
-      this.playerState.lastLapTime = lapTimeMs;
-      if (!this.playerState.bestLapTime || lapTimeMs < this.playerState.bestLapTime) {
-        this.playerState.bestLapTime = lapTimeMs;
-      }
-      this.callbacks.onLapCompleted(this.playerState.currentLap, lapTimeMs, this.playerState.bestLapTime);
-      this.checkpointsPassedInLap.clear();
-
-      if (this.playerState.currentLap >= this.totalLaps && this.mode !== 'practice') {
-        this.playerState.finished = true;
-        this.playerState.finishTime = now - this.raceStartTime;
-        this.checkRaceFinish();
-      } else {
-        this.playerState.currentLap++;
-      }
-    }
+    this.playerState.currentLapTime = this.raceActive
+      ? this.raceTimeMs - this.playerLapStartMs
+      : this.playerState.currentLapTime;
 
     // Update AI Fleet
     const allRiderPositions: THREE.Vector3[] = [this.playerBike.root.position];
     this.aiControllers.forEach((ai) => allRiderPositions.push(ai.bike.root.position));
 
     this.aiControllers.forEach((ai) => {
-      ai.update(delta, this.builtTrack, allRiderPositions, this.raceActive);
-      if (ai.raceState.currentLap > this.totalLaps && !ai.raceState.finished) {
-        ai.raceState.finished = true;
-        ai.raceState.finishTime = now - this.raceStartTime;
-      }
+      ai.update(
+        delta,
+        this.builtTrack,
+        allRiderPositions,
+        this.raceActive,
+        this.raceTimeMs,
+        this.totalLaps
+      );
     });
 
-    // Update Race Positions
-    const allRiders: RiderRaceState[] = [this.playerState, ...this.aiControllers.map((ai) => ai.raceState)];
-    allRiders.sort((a, b) => b.distanceOnTrack - a.distanceOnTrack);
-
-    allRiders.forEach((r, idx) => {
-      r.currentPosition = idx + 1;
-    });
-
-    const playerIdx = allRiders.findIndex((r) => r.rider.isPlayer);
-    let gapAhead = 0;
-    if (playerIdx > 0) {
-      const leaderDist = allRiders[playerIdx - 1].distanceOnTrack;
-      const myDist = this.playerState.distanceOnTrack;
-      const distDiff = leaderDist - myDist;
-      gapAhead = Math.max(0, distDiff / Math.max(1, phys.speedMs));
-    }
+    // Update Race Positions, gaps and classification order
+    this.buildClassification();
 
     // Sparks & Audio
     this.updateSparks(phys.isScrapingKnee, phys.isOverKerb, phys.position, phys.roll, delta);
@@ -506,24 +573,211 @@ export class RacingEngine {
     );
 
     // Telemetry Callback for HUD
-    const currentLapMs = this.raceActive ? now - this.lapStartTime : 0;
     this.callbacks.onTelemetryUpdate({
       speedKmh: Math.round(phys.speedKmh),
       gear: phys.gear,
       rpm: Math.round(phys.rpm),
       leanDeg: Math.round((phys.roll * 180) / Math.PI),
       position: this.playerState.currentPosition,
-      totalRiders: allRiders.length,
+      totalRiders: this.aiControllers.length + 1,
       lap: this.playerState.currentLap,
       totalLaps: this.totalLaps,
-      currentLapTimeMs: currentLapMs,
+      currentLapTimeMs: this.raceActive ? this.raceTimeMs - this.playerLapStartMs : 0,
       bestLapTimeMs: this.playerState.bestLapTime,
-      gapAheadSec: gapAhead,
+      gapAheadSec: this.playerState.gapToAheadSec,
       isOffTrack: phys.isOffTrack,
       isCrouched: this.playerInput.tuckIn,
       playerPos: { x: phys.position.x, z: phys.position.z },
       splineProgress: closestInfo.progress,
     });
+  }
+
+  /**
+   * Tracks the player's race progress with a monotonic, wrap-aware progress
+   * value so race distance never resets at the start/finish line, positions
+   * and gaps stay consistent, and laps are counted exactly once per crossing.
+   */
+  private updatePlayerRaceProgress(currentProgress: number) {
+    const trackLength = this.builtTrack.trackLength;
+
+    let deltaProgress = currentProgress - this.lastProgress;
+    let crossedLineForward = false;
+    let crossedLineBackward = false;
+    if (deltaProgress < -0.5) {
+      deltaProgress += 1.0; // wrapped forward across the start/finish line
+      crossedLineForward = true;
+    } else if (deltaProgress > 0.5) {
+      deltaProgress -= 1.0; // rolled backwards across the line
+      crossedLineBackward = true;
+    }
+    this.playerUnwrappedProgress += deltaProgress;
+    this.lastProgress = currentProgress;
+
+    this.playerState.splineProgress = currentProgress;
+    this.playerState.distanceOnTrack =
+      (this.playerUnwrappedProgress - 1.0) * trackLength;
+
+    // Checkpoint bookkeeping: credit every checkpoint passed this frame
+    // (handles skipped indices at low frame rates; backwards movement credits
+    // nothing, so reversing over the line cannot farm checkpoints).
+    const totalCheckpoints = this.builtTrack.checkpoints.length;
+    if (totalCheckpoints > 0) {
+      const currentCpIdx = Math.floor(currentProgress * totalCheckpoints) % totalCheckpoints;
+      if (currentCpIdx !== this.lastCheckpointIndex) {
+        // A backward wrap makes the raw index jump UP (31 -> 0 in reverse
+        // reads as 0 -> 31), so wraps must be direction-aware or reversing
+        // across the line would credit an entire lap's checkpoints.
+        const movedForward =
+          crossedLineForward ||
+          (!crossedLineBackward && currentCpIdx > this.lastCheckpointIndex);
+        if (movedForward) this.markCheckpointsToward(currentCpIdx, totalCheckpoints);
+        this.lastCheckpointIndex = currentCpIdx;
+      }
+    }
+
+    if (this.raceActive && crossedLineForward) {
+      this.handlePlayerLineCrossing();
+    }
+  }
+
+  private markCheckpointsToward(targetIdx: number, total: number) {
+    let cursor = this.lastCheckpointIndex;
+    for (let step = 0; step < total; step++) {
+      cursor = (cursor + 1) % total;
+      this.checkpointsPassedInLap.add(cursor);
+      if (cursor === targetIdx) break;
+    }
+  }
+
+  /**
+   * Handles a forward crossing of the start/finish line by the player.
+   *
+   * The grid sits behind the line, so the first crossing begins lap 1 without
+   * completing it. Later crossings complete a lap (subject to checkpoint
+   * validation, which blocks shortcutting but can no longer stall an honest
+   * lap), record lap timing, and finish the race after the final lap.
+   */
+  private handlePlayerLineCrossing() {
+    if (this.playerState.finished) return;
+
+    if (this.playerStartLinePending) {
+      // Standing start: this crossing begins lap 1. Lap 1 is timed from the
+      // green flag (same rule the AI riders follow).
+      this.playerStartLinePending = false;
+      return;
+    }
+
+    const totalCheckpoints = this.builtTrack.checkpoints.length;
+    const validated =
+      totalCheckpoints === 0 || this.checkpointsPassedInLap.size > totalCheckpoints * 0.8;
+    if (!validated) {
+      // Too many checkpoints missed (shortcut attempt): lap is not counted.
+      this.checkpointsPassedInLap.clear();
+      return;
+    }
+
+    const lapJustCompleted = this.playerState.currentLap;
+    this.playerCompletedLaps++;
+
+    const lapTimeMs = this.raceTimeMs - this.playerLapStartMs;
+    this.playerLapStartMs = this.raceTimeMs;
+    this.playerState.lastLapTime = lapTimeMs;
+    if (this.playerState.bestLapTime === null || lapTimeMs < this.playerState.bestLapTime) {
+      this.playerState.bestLapTime = lapTimeMs;
+    }
+
+    this.callbacks.onLapCompleted(lapJustCompleted, lapTimeMs, this.playerState.bestLapTime);
+    this.checkpointsPassedInLap.clear();
+
+    if (this.mode !== 'practice' && this.playerCompletedLaps >= this.totalLaps) {
+      this.playerState.currentLap = this.totalLaps;
+      this.finishPlayerRace();
+    } else {
+      this.playerState.currentLap = this.playerCompletedLaps + 1;
+    }
+  }
+
+  private finishPlayerRace() {
+    this.playerState.finished = true;
+    this.playerState.finishTime = this.raceTimeMs;
+    this.playerState.currentLap = this.totalLaps;
+    // Clean-race bonus reflects whether the player ever left the track,
+    // not just where they happened to be at the line.
+    this.playerState.isOffTrack = this.playerWentOffTrack;
+
+    // The race is over: freeze clocks and race progression, release inputs.
+    this.raceActive = false;
+    this.playerInput = {
+      throttle: 0,
+      frontBrake: 0,
+      rearBrake: 0,
+      steer: 0,
+      tuckIn: false,
+    };
+
+    this.finalizeRace();
+  }
+
+  /**
+   * Builds the official classification: finishers first ordered by finish
+   * time, then riders still racing ordered by distance covered. Also fills
+   * live positions and time/distance gaps on every rider state.
+   */
+  private buildClassification(): RiderRaceState[] {
+    const allRiders: RiderRaceState[] = [
+      this.playerState,
+      ...this.aiControllers.map((ai) => ai.raceState),
+    ];
+
+    allRiders.sort((a, b) => {
+      const aFinished = a.finished && a.finishTime !== null;
+      const bFinished = b.finished && b.finishTime !== null;
+      if (aFinished && bFinished) return (a.finishTime as number) - (b.finishTime as number);
+      if (aFinished) return -1;
+      if (bFinished) return 1;
+      return b.distanceOnTrack - a.distanceOnTrack;
+    });
+
+    allRiders.forEach((r, idx) => {
+      r.currentPosition = idx + 1;
+    });
+
+    const leader = allRiders[0];
+    allRiders.forEach((r, idx) => {
+      r.gapToLeaderSec = this.estimateGapSec(leader, r);
+      r.gapToAheadSec = idx === 0 ? 0 : this.estimateGapSec(allRiders[idx - 1], r);
+    });
+
+    return allRiders;
+  }
+
+  /** Time gap between a rider and the rider ahead (finish-time exact when
+   *  both have finished, distance/speed estimate otherwise). */
+  private estimateGapSec(ahead: RiderRaceState, rider: RiderRaceState): number {
+    if (ahead === rider) return 0;
+
+    const bothFinished =
+      ahead.finished &&
+      rider.finished &&
+      ahead.finishTime !== null &&
+      rider.finishTime !== null;
+    if (bothFinished) {
+      return Math.max(0, ((rider.finishTime as number) - (ahead.finishTime as number)) / 1000);
+    }
+
+    const distBehind = ahead.distanceOnTrack - rider.distanceOnTrack;
+    if (distBehind <= 0) return 0;
+    const speedMs = Math.max(10, rider.speedKmh / 3.6);
+    return distBehind / speedMs;
+  }
+
+  private finalizeRace() {
+    if (this.raceFinished) return;
+    this.raceFinished = true;
+    soundEngine.playVictoryFanfare();
+
+    const classification = this.buildClassification();
+    this.callbacks.onRaceFinish(classification);
   }
 
   private getClosestSplineInfo(pos: THREE.Vector3) {
@@ -563,18 +817,6 @@ export class RacingEngine {
     this.sparkParticles.geometry.attributes.position.needsUpdate = true;
   }
 
-  private checkRaceFinish() {
-    if (this.raceFinished) return;
-    this.raceFinished = true;
-    soundEngine.playVictoryFanfare();
-
-    const allRiders: RiderRaceState[] = [this.playerState, ...this.aiControllers.map((ai) => ai.raceState)];
-    allRiders.sort((a, b) => b.distanceOnTrack - a.distanceOnTrack);
-    allRiders.forEach((r, idx) => (r.currentPosition = idx + 1));
-
-    this.callbacks.onRaceFinish(allRiders);
-  }
-
   public resize(width: number, height: number) {
     this.renderer.setSize(width, height);
     this.cameraManager.resize(width, height);
@@ -582,6 +824,7 @@ export class RacingEngine {
 
   public dispose() {
     this.isRunning = false;
+    this.countdownStage = -1; // stop any pending countdown state
     cancelAnimationFrame(this.frameId);
     soundEngine.stopAll();
     this.builtTrack.dispose();

@@ -283,16 +283,26 @@ export const MOTORCYCLES: BikeDefinition[] = [
   },
 ];
 
-export const AI_RIDER_ROSTER = [
-  { name: 'Matteo Rossi', nationality: 'Italy', number: 46, bikeId: 'veloce_v4', skill: 1.02, aggressiveness: 0.95 },
-  { name: 'Kenji Takahashi', nationality: 'Japan', number: 30, bikeId: 'kinetix_r1000', skill: 0.98, aggressiveness: 0.8 },
-  { name: 'Jack "Outlaw" Miller', nationality: 'Australia', number: 43, bikeId: 'apex_phantom', skill: 0.95, aggressiveness: 0.9 },
-  { name: 'Hans Gruber', nationality: 'Germany', number: 12, bikeId: 'bavaria_sturm', skill: 0.97, aggressiveness: 0.75 },
-  { name: 'Carlos Santos', nationality: 'Spain', number: 88, bikeId: 'kurogane_rcv', skill: 1.01, aggressiveness: 0.92 },
-  { name: 'Freja Lindqvist', nationality: 'Sweden', number: 27, bikeId: 'nordic_valkyrie', skill: 0.94, aggressiveness: 0.85 },
-  { name: 'Marco Bagnaia', nationality: 'Italy', number: 63, bikeId: 'taurus_desmo', skill: 1.04, aggressiveness: 0.98 },
-  { name: 'Oliver Smith', nationality: 'UK', number: 77, bikeId: 'silverstone_works', skill: 0.93, aggressiveness: 0.78 },
-  { name: 'Antoine Laurent', nationality: 'France', number: 5, bikeId: 'zephyr_electron', skill: 0.96, aggressiveness: 0.82 },
-  { name: 'Lucas "Apex" Vance', nationality: 'USA', number: 69, bikeId: 'chimera_beast', skill: 1.03, aggressiveness: 0.96 },
-  { name: 'Elena Gomez', nationality: 'Spain', number: 19, bikeId: 'apex_phantom', skill: 0.92, aggressiveness: 0.88 },
+export interface AIRiderProfile {
+  id: string; // Stable canonical ID used for race results & championship standings
+  name: string;
+  nationality: string;
+  number: number;
+  bikeId: string;
+  skill: number;
+  aggressiveness: number;
+}
+
+export const AI_RIDER_ROSTER: AIRiderProfile[] = [
+  { id: 'ai_matteo_rossi', name: 'Matteo Rossi', nationality: 'Italy', number: 46, bikeId: 'veloce_v4', skill: 1.02, aggressiveness: 0.95 },
+  { id: 'ai_kenji_takahashi', name: 'Kenji Takahashi', nationality: 'Japan', number: 30, bikeId: 'kinetix_r1000', skill: 0.98, aggressiveness: 0.8 },
+  { id: 'ai_jack_miller', name: 'Jack "Outlaw" Miller', nationality: 'Australia', number: 43, bikeId: 'apex_phantom', skill: 0.95, aggressiveness: 0.9 },
+  { id: 'ai_hans_gruber', name: 'Hans Gruber', nationality: 'Germany', number: 12, bikeId: 'bavaria_sturm', skill: 0.97, aggressiveness: 0.75 },
+  { id: 'ai_carlos_santos', name: 'Carlos Santos', nationality: 'Spain', number: 88, bikeId: 'kurogane_rcv', skill: 1.01, aggressiveness: 0.92 },
+  { id: 'ai_freja_lindqvist', name: 'Freja Lindqvist', nationality: 'Sweden', number: 27, bikeId: 'nordic_valkyrie', skill: 0.94, aggressiveness: 0.85 },
+  { id: 'ai_marco_bagnaia', name: 'Marco Bagnaia', nationality: 'Italy', number: 63, bikeId: 'taurus_desmo', skill: 1.04, aggressiveness: 0.98 },
+  { id: 'ai_oliver_smith', name: 'Oliver Smith', nationality: 'UK', number: 77, bikeId: 'silverstone_works', skill: 0.93, aggressiveness: 0.78 },
+  { id: 'ai_antoine_laurent', name: 'Antoine Laurent', nationality: 'France', number: 5, bikeId: 'zephyr_electron', skill: 0.96, aggressiveness: 0.82 },
+  { id: 'ai_lucas_vance', name: 'Lucas "Apex" Vance', nationality: 'USA', number: 69, bikeId: 'chimera_beast', skill: 1.03, aggressiveness: 0.96 },
+  { id: 'ai_elena_gomez', name: 'Elena Gomez', nationality: 'Spain', number: 19, bikeId: 'apex_phantom', skill: 0.92, aggressiveness: 0.88 },
 ];

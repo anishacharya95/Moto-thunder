@@ -19,6 +19,13 @@ export class AIRiderController {
   public gear: number = 1;
   public rpm: number = 4200;
 
+  // Race progression tracking
+  public completedLaps = 0; // validated start-line crossings
+  private unwrappedProgress: number = 0; // monotonic progress, never wraps at the line
+  private prevProgress: number = 0;
+  private startLinePending = true; // standing start: first crossing begins lap 1
+  private lapStartRaceTimeMs = 0;
+
   private topSpeedMs: number;
   private maxAccel: number;
   private maxBraking: number;
@@ -30,13 +37,6 @@ export class AIRiderController {
     const bikeDef = MOTORCYCLES.find((b) => b.id === profile.bikeId) || MOTORCYCLES[0];
     this.bike = buildMotorcycle(bikeDef);
 
-    // Initial position on grid
-    const slot = track.gridSlots[gridSlotIndex] || track.gridSlots[0];
-    this.bike.root.position.copy(slot.position);
-    this.heading = slot.rotationY;
-    this.bike.root.rotation.y = -this.heading;
-    this.progress = slot.progress;
-
     // Performance tuning based on skill
     const skill = profile.skill;
     this.topSpeedMs = ((bikeDef.baseStats.topSpeed * 0.95) / 3.6) * skill;
@@ -46,7 +46,7 @@ export class AIRiderController {
     this.raceState = {
       rider: profile,
       distanceOnTrack: 0,
-      splineProgress: slot.progress,
+      splineProgress: 0,
       currentLap: 1,
       currentPosition: gridSlotIndex + 1,
       speedKmh: 0,
@@ -67,14 +67,99 @@ export class AIRiderController {
     };
 
     this.targetLateralOffset = (Math.random() - 0.5) * 4.5;
-    this.lateralOffset = this.targetLateralOffset;
+    this.reset(track, gridSlotIndex);
+  }
+
+  /**
+   * Places the rider back on their grid slot and clears all race progression
+   * state (laps, timings, distance, finish status) for a race restart.
+   */
+  public reset(track: BuiltTrack, gridSlotIndex: number): void {
+    const slot = track.gridSlots[gridSlotIndex] || track.gridSlots[0];
+
+    this.bike.root.position.copy(slot.position);
+    this.bike.root.rotation.set(0, -slot.rotationY, 0);
+    this.heading = slot.rotationY;
+
+    this.progress = slot.progress;
+    this.prevProgress = slot.progress;
+    this.unwrappedProgress = slot.progress;
+    this.speedMs = 0;
+    this.targetSpeedMs = 0;
+    this.leanAngle = 0;
+    this.gear = 1;
+    this.rpm = 4200;
+
+    this.lateralOffset = (Math.random() - 0.5) * 4.5;
+    this.targetLateralOffset = this.lateralOffset;
+
+    this.completedLaps = 0;
+    this.startLinePending = true;
+    this.lapStartRaceTimeMs = 0;
+
+    this.raceState.distanceOnTrack = (slot.progress - 1.0) * track.trackLength;
+    this.raceState.splineProgress = slot.progress;
+    this.raceState.currentLap = 1;
+    this.raceState.currentPosition = gridSlotIndex + 1;
+    this.raceState.speedKmh = 0;
+    this.raceState.gear = 1;
+    this.raceState.rpm = 4200;
+    this.raceState.leanAngleRad = 0;
+    this.raceState.isCrouched = false;
+    this.raceState.isOffTrack = false;
+    this.raceState.isDrafting = false;
+    this.raceState.lastLapTime = null;
+    this.raceState.bestLapTime = null;
+    this.raceState.currentLapTime = 0;
+    this.raceState.sectorTimes = [];
+    this.raceState.finished = false;
+    this.raceState.finishTime = null;
+    this.raceState.gapToLeaderSec = 0;
+    this.raceState.gapToAheadSec = 0;
+  }
+
+  /**
+   * Handles a forward crossing of the start/finish line.
+   *
+   * The grid sits behind the line, so the first crossing simply begins lap 1.
+   * Every later crossing completes a lap, records lap timing, and after the
+   * final lap marks the rider as finished.
+   */
+  private handleLineCrossing(raceTimeMs: number, totalLaps: number): void {
+    if (this.raceState.finished) return;
+
+    if (this.startLinePending) {
+      // Standing start: this crossing begins lap 1 without completing it.
+      // Lap 1 is timed from the green flag (lapStartRaceTimeMs starts at 0).
+      this.startLinePending = false;
+      return;
+    }
+
+    this.completedLaps++;
+
+    const lapTimeMs = raceTimeMs - this.lapStartRaceTimeMs;
+    this.lapStartRaceTimeMs = raceTimeMs;
+    this.raceState.lastLapTime = lapTimeMs;
+    if (this.raceState.bestLapTime === null || lapTimeMs < this.raceState.bestLapTime) {
+      this.raceState.bestLapTime = lapTimeMs;
+    }
+
+    if (this.completedLaps >= totalLaps) {
+      this.raceState.finished = true;
+      this.raceState.finishTime = raceTimeMs;
+      this.raceState.currentLap = totalLaps;
+    } else {
+      this.raceState.currentLap = this.completedLaps + 1;
+    }
   }
 
   public update(
     delta: number,
     track: BuiltTrack,
     allRiderPositions: THREE.Vector3[],
-    raceActive: boolean
+    raceActive: boolean,
+    raceTimeMs = 0,
+    totalLaps = Number.MAX_SAFE_INTEGER
   ): void {
     if (!raceActive) {
       this.bike.updateAnimation(0, 0, 0, 0, false, delta);
@@ -82,6 +167,7 @@ export class AIRiderController {
     }
 
     const dt = Math.min(delta, 0.05);
+    const raceProgressLocked = this.raceState.finished;
 
     // Lookahead for corner braking
     const lookAheadMeters = Math.max(18, this.speedMs * 0.75);
@@ -129,12 +215,25 @@ export class AIRiderController {
 
     // Advance along spline
     const distanceStep = this.speedMs * dt;
-    this.raceState.distanceOnTrack += distanceStep;
+    const prev = this.progress;
     this.progress = (this.progress + distanceStep / track.trackLength) % 1.0;
-    this.raceState.splineProgress = this.progress;
 
-    if (this.progress < 0.05 && this.raceState.splineProgress > 0.9) {
-      this.raceState.currentLap++;
+    if (!raceProgressLocked) {
+      // Monotonic unwrapped progress: never resets at the line, so race
+      // distance stays continuous and line crossings are detectable.
+      let deltaProgress = this.progress - prev;
+      if (deltaProgress < -0.5) {
+        deltaProgress += 1.0; // crossed the start/finish line forwards
+        this.handleLineCrossing(raceTimeMs, totalLaps);
+      } else if (deltaProgress > 0.5) {
+        deltaProgress -= 1.0; // rolled backwards over the line
+      }
+      this.unwrappedProgress += deltaProgress;
+
+      this.raceState.distanceOnTrack =
+        (this.unwrappedProgress - 1.0) * track.trackLength;
+      this.raceState.splineProgress = this.progress;
+      this.raceState.currentLapTime = raceTimeMs - this.lapStartRaceTimeMs;
     }
 
     // Update 3D Position

@@ -159,6 +159,11 @@ export interface ChampionshipStanding {
   isPlayer: boolean;
 }
 
+export interface ChampionshipRoundResult {
+  winnerId: string;
+  podiumIds: string[];
+}
+
 export interface PlayerSaveData {
   credits: number;
   reputation: number;
@@ -171,5 +176,8 @@ export interface PlayerSaveData {
   careerRaces: number;
   championshipCurrentRound: number;
   championshipStandings: ChampionshipStanding[];
+  // Per-round scoring records so a restarted round can be re-scored without double counting
+  championshipRoundPoints: Record<number, Record<string, number>>; // roundIndex -> riderId -> points
+  championshipRoundResults: Record<number, ChampionshipRoundResult>;
   settings: PlayerSettings;
 }
