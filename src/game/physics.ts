@@ -76,6 +76,11 @@ export class MotorcyclePhysics {
   // and brake temperature (fades brake power) — shared model with the AI.
   public consumables = new RaceConsumables();
 
+  // Slipstream0..1: set by the race engine each frame when another rider
+  // is towing us on a straight. Cuts drag and lifts the terminal-speed cap
+  // by a few percent — a subtle tow, never a speed boost in corners.
+  private draftFactor = 0;
+
   // Frame-to-frame transients
   private prevLongAccel = 0;        // m/s^2 measured chassis acceleration
   private prevMechFront = 0;        // N front load before aero share
@@ -143,6 +148,16 @@ export class MotorcyclePhysics {
     this.autoShift = !settings.manualGearbox;
   }
 
+  /** Updates the slipstream strength (0..1) for this frame. */
+  public setDraft(factor: number): void {
+    this.draftFactor = Math.max(0, Math.min(1, factor));
+  }
+
+  /** Current slipstream strength, for HUD/telemetry. */
+  public get draft(): number {
+    return this.draftFactor;
+  }
+
   public update(input: RiderInput, delta: number, trackInfo?: { distToCenter: number; trackHalfWidth: number }): void {
     const dt = Math.min(delta, 0.05);
     // Wet mass: the fuel load is part of the bike until it is burned off,
@@ -193,7 +208,8 @@ export class MotorcyclePhysics {
 
     // 3. Aerodynamics: drag (tuck lowers Cd, as before) plus downforce that
     // presses the tires into the track — tuck and aero upgrades add grip.
-    const dragCd = input.tuckIn ? 0.30 : 0.38;
+    // Riding in another rider's wake cuts the drag we have to push through.
+    const dragCd = (input.tuckIn ? 0.30 : 0.38) * (1 - 0.25 * this.draftFactor);
     const dragDecel = (0.5 * AIR_DENSITY * dragCd * DRAG_FRONTAL_AREA * v * v) / m;
     const clA = (input.tuckIn ? 0.33 : 0.22) * this.aeroBonus;
     const downforce = 0.5 * AIR_DENSITY * clA * v * v;
@@ -253,7 +269,8 @@ export class MotorcyclePhysics {
       gearPowerFactor *
       surfaceGrip *
       this.consumables.gripRear;
-    if (v >= this.effectiveTopSpeed) driveAccel = 0;
+    // Slipstream extends the terminal-speed cap by up to ~3.5% in the tow.
+    if (v >= this.effectiveTopSpeed * (1 + 0.035 * this.draftFactor)) driveAccel = 0;
     // Short-gear launch punch: with the aids disabled this is what lifts the
     // front wheel out of slow corners.
     if (input.throttle > 0.9 && this.state.gear <= 2 && v < 20) {
@@ -473,6 +490,7 @@ export class MotorcyclePhysics {
     this.state.isLimiter = false;
     this.state.skidRatio = 0;
     this.state.trailBrakingSlide = false;
+    this.draftFactor = 0;
 
     // Clear transients so a restart launches cleanly
     this.prevLongAccel = 0;

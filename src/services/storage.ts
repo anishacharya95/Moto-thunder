@@ -28,6 +28,7 @@ export const DEFAULT_SETTINGS: PlayerSettings = {
   graphicsQuality: 'high',
   showFps: false,
   hapticFeedback: true,
+  aiDifficulty: 'normal',
 };
 
 const defaultUpgrades: BikeUpgrades = {

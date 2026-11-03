@@ -13,7 +13,10 @@ import { AI_RIDER_ROSTER } from '../data/bikes';
 import { buildTrack, BuiltTrack } from './trackBuilder';
 import { buildMotorcycle, BuiltBike } from './bikeBuilder';
 import { MotorcyclePhysics, RiderInput } from './physics';
-import { AIRiderController } from './aiRider';
+import { AIRiderController, RiderContext, AIUpdateEnv, computeDraftFactor } from './aiRider';
+import { getRacingLine, RacingLineData, isStraightAt } from './racingLine';
+import { DIFFICULTY_PROFILES } from './aiPersonality';
+import { classifyRiders } from './classification';
 import { CameraManager } from './cameraManager';
 import { soundEngine } from '../services/audio';
 
@@ -51,6 +54,22 @@ export class RacingEngine {
 
   // AI Fleet
   public aiControllers: AIRiderController[] = [];
+
+  // Precomputed racing line + per-frame rider context buffer shared by all
+  // AI (built once; updated in place — zero per-frame allocation).
+  private racingLine: RacingLineData;
+  private riderContexts: RiderContext[] = [];
+  private aiEnv: AIUpdateEnv;
+
+  // Player slipstream state
+  private playerDraft = 0;
+
+  // Position-change events for the HUD overtake toast
+  private prevPlayerPosition = 1;
+  private positionEventId = 0;
+  private pendingPositionEvent: { id: number; from: number; to: number } | undefined;
+  private playerGapAheadName: string | null = null;
+  private playerGapBehindName: string | null = null;
 
   // Particle systems
   private sparkParticles: THREE.Points;
@@ -252,6 +271,7 @@ export class RacingEngine {
       finishTime: null,
       gapToLeaderSec: 0,
       gapToAheadSec: 0,
+      gapToBehindSec: 0,
     };
 
     // 5. Spawn AI Grid (Except in Practice or Time Trial modes)
@@ -273,10 +293,38 @@ export class RacingEngine {
           this.builtTrack,
           gridSlotIdx
         );
+        aiController.setDifficulty(settings.aiDifficulty);
         this.aiControllers.push(aiController);
         this.scene.add(aiController.bike.root);
       });
     }
+
+    // 5b. Racing line cache + reusable rider context buffer for the AI fleet.
+    this.racingLine = getRacingLine(this.builtTrack);
+    const contextCount = this.aiControllers.length + 1; // player + AI
+    for (let i = 0; i < contextCount; i++) {
+      this.riderContexts.push({
+        id: i === 0 ? 'player' : '',
+        isPlayer: i === 0,
+        position: new THREE.Vector3(),
+        heading: 0,
+        speedMs: 0,
+        raceDistance: 0,
+        splineProgress: 0,
+        lateralOffset: 0,
+        finished: false,
+      });
+    }
+    this.aiEnv = {
+      track: this.builtTrack,
+      line: this.racingLine,
+      riders: this.riderContexts,
+      selfIndex: 0,
+      raceActive: false,
+      raceTimeMs: 0,
+      totalLaps: this.totalLaps,
+      difficulty: DIFFICULTY_PROFILES[settings.aiDifficulty],
+    };
 
     // 6. Camera Manager (aspect ratio from container)
     this.cameraManager = new CameraManager(container.clientWidth / container.clientHeight);
@@ -377,6 +425,8 @@ export class RacingEngine {
   public applySettings(settings: PlayerSettings) {
     this.settings = settings;
     this.playerPhysics.applySettings(settings);
+    // AI difficulty applies immediately; difficulty modifies behavior only.
+    this.aiEnv.difficulty = DIFFICULTY_PROFILES[settings.aiDifficulty];
   }
 
   public toggleCamera() {
@@ -450,7 +500,15 @@ export class RacingEngine {
       finishTime: null,
       gapToLeaderSec: 0,
       gapToAheadSec: 0,
+      gapToBehindSec: 0,
     });
+
+    // A restart clears live battle feedback until the field moves again.
+    this.playerDraft = 0;
+    this.prevPlayerPosition = 1;
+    this.pendingPositionEvent = undefined;
+    this.playerGapAheadName = null;
+    this.playerGapBehindName = null;
 
     this.aiControllers.forEach((ai, idx) => {
       ai.reset(this.builtTrack, idx + 1);
@@ -539,23 +597,81 @@ export class RacingEngine {
       ? this.raceTimeMs - this.playerLapStartMs
       : this.playerState.currentLapTime;
 
-    // Update AI Fleet
-    const allRiderPositions: THREE.Vector3[] = [this.playerBike.root.position];
-    this.aiControllers.forEach((ai) => allRiderPositions.push(ai.bike.root.position));
+    // Build the per-frame rider context buffer (player first, then AI).
+    // One reused array — the AI fleet reads it for overtaking, defense,
+    // side-by-side spacing and slipstream decisions with no allocation.
+    const contextCount = this.riderContexts.length;
+    if (contextCount > 0) {
+      const pCtx = this.riderContexts[0];
+      pCtx.id = 'player';
+      pCtx.isPlayer = true;
+      pCtx.position = phys.position;
+      pCtx.heading = phys.heading;
+      pCtx.speedMs = phys.speedMs;
+      pCtx.raceDistance = this.playerState.distanceOnTrack;
+      pCtx.splineProgress = closestInfo.progress;
+      pCtx.lateralOffset = closestInfo.distance;
+      pCtx.finished = this.playerState.finished;
+    }
+    for (let i = 0; i < this.aiControllers.length; i++) {
+      const ctx = this.riderContexts[i + 1];
+      const ai = this.aiControllers[i];
+      ctx.id = ai.profile.id;
+      ctx.isPlayer = false;
+      ctx.position = ai.bike.root.position;
+      ctx.heading = ai.heading;
+      ctx.speedMs = ai.speedMs;
+      ctx.raceDistance = ai.raceState.distanceOnTrack;
+      ctx.splineProgress = ai.progress;
+      ctx.lateralOffset = ai.lateralOffset;
+      ctx.finished = ai.raceState.finished;
+    }
 
-    this.aiControllers.forEach((ai) => {
-      ai.update(
-        delta,
-        this.builtTrack,
-        allRiderPositions,
-        this.raceActive,
-        this.raceTimeMs,
-        this.totalLaps
-      );
-    });
+    // Player slipstream: strongest tow behind a rider directly ahead on a
+    // straight; off-line or in corners it fades to nothing.
+    if (contextCount > 0 && this.raceActive && !this.playerState.finished) {
+      let draft = 0;
+      const playerLateral = closestInfo.distance;
+      for (let i = 1; i < contextCount; i++) {
+        const other = this.riderContexts[i];
+        const dd = other.raceDistance - this.playerState.distanceOnTrack;
+        if (dd <= 1 || dd >= 26) continue;
+        const midProgress = closestInfo.progress + Math.min(dd, 20) / 2 / this.builtTrack.trackLength;
+        const factor = computeDraftFactor(
+          dd,
+          Math.abs(other.lateralOffset - playerLateral),
+          isStraightAt(this.racingLine, midProgress)
+        );
+        if (factor > draft) draft = factor;
+      }
+      this.playerDraft = draft;
+    } else {
+      this.playerDraft = 0;
+    }
+    this.playerPhysics.setDraft(this.playerDraft);
+    this.playerState.isDrafting = this.playerDraft > 0.35;
+
+    // Update AI Fleet
+    this.aiEnv.raceActive = this.raceActive;
+    this.aiEnv.raceTimeMs = this.raceTimeMs;
+    for (let i = 0; i < this.aiControllers.length; i++) {
+      this.aiEnv.selfIndex = i + 1;
+      this.aiControllers[i].update(delta, this.aiEnv);
+    }
 
     // Update Race Positions, gaps and classification order
     this.buildClassification();
+
+    // Position-change event for the HUD overtake / position-lost toast.
+    if (this.raceActive && this.playerState.currentPosition !== this.prevPlayerPosition) {
+      this.positionEventId++;
+      this.pendingPositionEvent = {
+        id: this.positionEventId,
+        from: this.prevPlayerPosition,
+        to: this.playerState.currentPosition,
+      };
+    }
+    this.prevPlayerPosition = this.playerState.currentPosition;
 
     // Sparks & Audio
     this.updateSparks(phys.isScrapingKnee, phys.isOverKerb, phys.position, phys.roll, delta);
@@ -591,10 +707,15 @@ export class RacingEngine {
       currentLapTimeMs: this.raceActive ? this.raceTimeMs - this.playerLapStartMs : 0,
       bestLapTimeMs: this.playerState.bestLapTime,
       gapAheadSec: this.playerState.gapToAheadSec,
+      gapBehindSec: this.playerState.gapToBehindSec,
+      gapAheadName: this.playerGapAheadName ?? undefined,
+      gapBehindName: this.playerGapBehindName ?? undefined,
       isOffTrack: phys.isOffTrack,
       isCrouched: this.playerInput.tuckIn,
+      isDrafting: this.playerState.isDrafting,
       playerPos: { x: phys.position.x, z: phys.position.z },
       splineProgress: closestInfo.progress,
+      positionEvent: this.pendingPositionEvent,
       fuelKg: this.playerPhysics.consumables.fuelKg,
       tireWearFront: this.playerPhysics.consumables.wearFront,
       tireWearRear: this.playerPhysics.consumables.wearRear,
@@ -734,51 +855,20 @@ export class RacingEngine {
    * live positions and time/distance gaps on every rider state.
    */
   private buildClassification(): RiderRaceState[] {
-    const allRiders: RiderRaceState[] = [
+    // Ordering/gap math lives in ./classification so headless tests run the
+    // exact same code the race uses.
+    const allRiders = classifyRiders([
       this.playerState,
       ...this.aiControllers.map((ai) => ai.raceState),
-    ];
+    ]);
 
-    allRiders.sort((a, b) => {
-      const aFinished = a.finished && a.finishTime !== null;
-      const bFinished = b.finished && b.finishTime !== null;
-      if (aFinished && bFinished) return (a.finishTime as number) - (b.finishTime as number);
-      if (aFinished) return -1;
-      if (bFinished) return 1;
-      return b.distanceOnTrack - a.distanceOnTrack;
-    });
-
-    allRiders.forEach((r, idx) => {
-      r.currentPosition = idx + 1;
-    });
-
-    const leader = allRiders[0];
-    allRiders.forEach((r, idx) => {
-      r.gapToLeaderSec = this.estimateGapSec(leader, r);
-      r.gapToAheadSec = idx === 0 ? 0 : this.estimateGapSec(allRiders[idx - 1], r);
-    });
+    // Names of the riders around the player for the HUD gap readout.
+    const pIdx = allRiders.indexOf(this.playerState);
+    this.playerGapAheadName = pIdx > 0 ? allRiders[pIdx - 1].rider.name : null;
+    this.playerGapBehindName =
+      pIdx >= 0 && pIdx < allRiders.length - 1 ? allRiders[pIdx + 1].rider.name : null;
 
     return allRiders;
-  }
-
-  /** Time gap between a rider and the rider ahead (finish-time exact when
-   *  both have finished, distance/speed estimate otherwise). */
-  private estimateGapSec(ahead: RiderRaceState, rider: RiderRaceState): number {
-    if (ahead === rider) return 0;
-
-    const bothFinished =
-      ahead.finished &&
-      rider.finished &&
-      ahead.finishTime !== null &&
-      rider.finishTime !== null;
-    if (bothFinished) {
-      return Math.max(0, ((rider.finishTime as number) - (ahead.finishTime as number)) / 1000);
-    }
-
-    const distBehind = ahead.distanceOnTrack - rider.distanceOnTrack;
-    if (distBehind <= 0) return 0;
-    const speedMs = Math.max(10, rider.speedKmh / 3.6);
-    return distBehind / speedMs;
   }
 
   private finalizeRace() {

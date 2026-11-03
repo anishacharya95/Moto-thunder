@@ -1,6 +1,6 @@
 import React from 'react';
 import { PlayerSettings, ControlType, GraphicsQuality } from '../types/game';
-import { X, Volume2, Gamepad2, Monitor, Gauge } from 'lucide-react';
+import { X, Volume2, Gamepad2, Monitor, Gauge, Bot } from 'lucide-react';
 import { soundEngine } from '../services/audio';
 
 interface SettingsModalProps {
@@ -182,6 +182,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* AI Difficulty */}
+          <div>
+            <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider mb-3">
+              <Bot className="w-4 h-4" />
+              <span>AI Opponent Difficulty</span>
+            </div>
+            <div className="grid grid-cols-4 gap-2 mb-2">
+              {(['easy', 'normal', 'hard', 'pro'] as const).map((d) => (
+                <button
+                  key={d}
+                  onClick={() => update({ aiDifficulty: d })}
+                  className={`py-2 rounded-xl border text-xs font-bold uppercase transition-all ${
+                    settings.aiDifficulty === d
+                      ? 'bg-amber-500 text-black border-amber-400'
+                      : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            <span className="text-[10px] text-zinc-500">
+              Changes how the AI rides — braking points, corner speed, mistakes and battles — never their raw physics
+            </span>
           </div>
 
           {/* Graphics Quality */}

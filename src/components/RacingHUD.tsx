@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { CircuitDefinition, TelemetryData } from '../types/game';
 import { Camera, Pause } from 'lucide-react';
 import { FUEL_CAPACITY_KG } from '../game/consumables';
@@ -64,6 +64,30 @@ export const RacingHUD: React.FC<RacingHUDProps> = ({
     if (level < 60) return 'bg-amber-400';
     return 'bg-cyan-400';
   };
+
+  // Overtake / position-lost toast: shown once per engine position event,
+  // auto-dismissed so it never clutters the race view.
+  const [positionNotice, setPositionNotice] = useState<{
+    id: number;
+    gained: boolean;
+    from: number;
+    to: number;
+  } | null>(null);
+  const positionEventId = telemetry.positionEvent?.id;
+  const positionEvent = telemetry.positionEvent;
+  useEffect(() => {
+    if (!positionEvent || positionEvent.from === positionEvent.to) return;
+    setPositionNotice({
+      id: positionEvent.id,
+      gained: positionEvent.to < positionEvent.from,
+      from: positionEvent.from,
+      to: positionEvent.to,
+    });
+    const timer = setTimeout(() => {
+      setPositionNotice((cur) => (cur && cur.id === positionEvent.id ? null : cur));
+    }, 2600);
+    return () => clearTimeout(timer);
+  }, [positionEventId, positionEvent]);
 
   // Dynamically compute full circuit bounding box & smooth path so the ENTIRE track is visible
   const mapData = useMemo(() => {
@@ -154,8 +178,21 @@ export const RacingHUD: React.FC<RacingHUDProps> = ({
 
             {/* Gap to rider ahead */}
             {telemetry.gapAheadSec > 0 && (
-              <div className="text-[9px] font-mono text-rose-400 font-bold text-right pt-0.5">
-                +{telemetry.gapAheadSec.toFixed(2)}s
+              <div className="text-[9px] font-mono text-rose-400 font-bold text-right pt-0.5 truncate">
+                {telemetry.gapAheadName
+                  ? `${telemetry.gapAheadName.split(' ').pop()} `
+                  : ''}
+                +{telemetry.gapAheadSec.toFixed(3)}s
+              </div>
+            )}
+
+            {/* Gap to rider behind */}
+            {telemetry.gapBehindSec !== undefined && telemetry.gapBehindSec > 0 && (
+              <div className="text-[9px] font-mono text-emerald-400 font-bold text-right truncate">
+                -{telemetry.gapBehindSec.toFixed(3)}s
+                {telemetry.gapBehindName
+                  ? ` ${telemetry.gapBehindName.split(' ').pop()}`
+                  : ''}
               </div>
             )}
           </div>
@@ -285,6 +322,26 @@ export const RacingHUD: React.FC<RacingHUDProps> = ({
           </div>
         </div>
       </div>
+
+      {/* ======================================================== */}
+      {/* OVERTAKE / POSITION-LOST TOAST (position, top-center)   */}
+      {/* ======================================================== */}
+      {positionNotice && (
+        <div
+          className={`absolute left-1/2 top-20 sm:top-24 -translate-x-1/2 z-20 px-4 sm:px-6 py-2 rounded-2xl border-2 shadow-2xl backdrop-blur-md text-center ${
+            positionNotice.gained
+              ? 'bg-emerald-600/90 border-emerald-300 shadow-emerald-500/40'
+              : 'bg-rose-700/90 border-rose-300 shadow-rose-500/40'
+          }`}
+        >
+          <div className="text-sm sm:text-lg font-teko font-extrabold uppercase tracking-widest text-white leading-none">
+            {positionNotice.gained ? 'OVERTAKE!' : 'POSITION LOST'}
+          </div>
+          <div className="text-[10px] sm:text-xs font-mono font-bold text-white/90 mt-0.5">
+            P{positionNotice.from} → P{positionNotice.to}
+          </div>
+        </div>
+      )}
 
       {/* ======================================================== */}
       {/* 2. DEDICATED SPEED & GEAR PANEL (ABOVE BOTTOM CONTROLS)  */}

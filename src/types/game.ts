@@ -10,6 +10,10 @@ export type ControlType = 'touch_slider' | 'touch_buttons' | 'touch_tilt' | 'key
 
 export type GraphicsQuality = 'low' | 'medium' | 'high' | 'ultra';
 
+/** AI opponent difficulty. Modifies AI behavior (braking points, corner
+ *  speed used, mistake rate, overtaking/defending) — never raw physics. */
+export type AIDifficulty = 'easy' | 'normal' | 'hard' | 'pro';
+
 export interface BikeStats {
   topSpeed: number;     // km/h (e.g. 330)
   acceleration: number; // 0-100 rating
@@ -111,6 +115,7 @@ export interface RiderRaceState {
   finishTime: number | null;
   gapToLeaderSec: number;
   gapToAheadSec: number;
+  gapToBehindSec: number;
 }
 
 export interface TelemetryData {
@@ -125,10 +130,16 @@ export interface TelemetryData {
   currentLapTimeMs: number;
   bestLapTimeMs: number | null;
   gapAheadSec: number;
+  gapBehindSec?: number;
+  gapAheadName?: string;
+  gapBehindName?: string;
   isOffTrack: boolean;
   isCrouched: boolean;
+  isDrafting?: boolean;
   playerPos?: { x: number; z: number };
   splineProgress?: number;
+  /** Fires once per position change: HUD shows an OVERTAKE/POSITION LOST toast. */
+  positionEvent?: { id: number; from: number; to: number };
   // Race consumables (present once the engine reports them)
   fuelKg?: number;          // kg remaining in the tank
   tireWearFront?: number;   // 0 = fresh, 1 = worn out
@@ -153,6 +164,7 @@ export interface PlayerSettings {
   graphicsQuality: GraphicsQuality;
   showFps: boolean;
   hapticFeedback: boolean;
+  aiDifficulty: AIDifficulty;
 }
 
 export interface ChampionshipStanding {
