@@ -27,5 +27,7 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Type-check
         run: bun run lint
+      - name: Run physics regression tests
+        run: bun run test
       - name: Build production bundle
         run: bun run build
