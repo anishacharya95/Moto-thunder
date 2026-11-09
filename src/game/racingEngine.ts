@@ -7,6 +7,7 @@ import {
   GameMode,
   RiderRaceState,
   PlayerSettings,
+  GraphicsQuality,
   TelemetryData,
 } from '../types/game';
 import { AI_RIDER_ROSTER } from '../data/bikes';
@@ -369,6 +370,8 @@ export class RacingEngine {
       this.startCountdown();
     }
 
+    // Apply the selected preset after lights and renderer are fully initialized.
+    this.applyGraphicsQuality(settings.graphicsQuality);
     this.startLoop();
   }
 
@@ -425,8 +428,52 @@ export class RacingEngine {
   public applySettings(settings: PlayerSettings) {
     this.settings = settings;
     this.playerPhysics.applySettings(settings);
+    this.applyGraphicsQuality(settings.graphicsQuality);
     // AI difficulty applies immediately; difficulty modifies behavior only.
     this.aiEnv.difficulty = DIFFICULTY_PROFILES[settings.aiDifficulty];
+  }
+
+  /**
+   * Apply graphics presets to the active renderer, not just the saved setting.
+   * Pixel-ratio caps are deliberately conservative for mobile GPUs; software
+   * renderers keep shadows disabled regardless of the selected preset.
+   */
+  private applyGraphicsQuality(quality: GraphicsQuality) {
+    const pixelRatioCap: Record<GraphicsQuality, number> = {
+      low: 0.85,
+      medium: 1,
+      high: 1.25,
+      ultra: 1.5,
+    };
+    const pixelRatio = this.isSoftwareGl
+      ? 1
+      : Math.min(window.devicePixelRatio || 1, pixelRatioCap[quality]);
+
+    this.renderer.setPixelRatio(pixelRatio);
+    this.renderer.setSize(
+      Math.max(1, this.container.clientWidth),
+      Math.max(1, this.container.clientHeight),
+      false
+    );
+
+    const shadowsEnabled = !this.isSoftwareGl && quality !== 'low';
+    const shadowResolution =
+      quality === 'ultra' ? 1536 : quality === 'high' ? 1024 : 512;
+
+    this.renderer.shadowMap.enabled = shadowsEnabled;
+    this.dirLight.castShadow = shadowsEnabled;
+
+    if (
+      this.dirLight.shadow.mapSize.width !== shadowResolution ||
+      this.dirLight.shadow.mapSize.height !== shadowResolution
+    ) {
+      this.dirLight.shadow.map?.dispose();
+      this.dirLight.shadow.map = null;
+      this.dirLight.shadow.mapSize.set(shadowResolution, shadowResolution);
+      this.dirLight.shadow.needsUpdate = true;
+    }
+
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   public toggleCamera() {
