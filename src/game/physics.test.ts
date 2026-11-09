@@ -150,3 +150,38 @@ test('large frame deltas are capped to avoid unstable physics jumps', () => {
   assert.ok(physics.state.speedMs < 2, 'a five-second frame should be capped to 50 ms');
   assert.ok(Number.isFinite(physics.state.speedKmh));
 });
+
+test('invalid frame deltas and sensor values cannot poison physics state', () => {
+  const physics = makePhysics();
+  physics.update({
+    ...neutralInput,
+    throttle: Number.NaN,
+    frontBrake: Number.POSITIVE_INFINITY,
+    rearBrake: Number.NEGATIVE_INFINITY,
+    steer: Number.NaN,
+  }, Number.NaN);
+
+  assert.equal(physics.state.speedMs, 0);
+  assert.equal(physics.state.speedKmh, 0);
+  assert.ok(Number.isFinite(physics.state.position.x));
+  assert.ok(Number.isFinite(physics.state.position.z));
+  assert.ok(Number.isFinite(physics.state.heading));
+  assert.ok(Number.isFinite(physics.state.roll));
+  assert.ok(Number.isFinite(physics.state.rpm));
+});
+
+test('out-of-range controls are clamped before physics integration', () => {
+  const physics = makePhysics();
+  physics.update({
+    ...neutralInput,
+    throttle: 4,
+    frontBrake: -3,
+    rearBrake: 2,
+    steer: 8,
+  }, 1 / 60);
+
+  assert.ok(physics.state.speedMs >= 0);
+  assert.ok(physics.state.speedMs < 1, 'clamped throttle should not exceed normal launch response');
+  assert.ok(Math.abs(physics.state.roll) <= 1.11);
+  assert.ok(Number.isFinite(physics.state.heading));
+});
