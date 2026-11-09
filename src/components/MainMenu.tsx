@@ -3,7 +3,7 @@ import { PlayerSaveData, GameMode } from '../types/game';
 import { MOTORCYCLES } from '../data/bikes';
 import { CIRCUITS } from '../data/circuits';
 import {
-  Bike, ChartNoAxesColumnIncreasing, ChevronRight, Flag, Gauge, Gem,
+  Bike, ChartNoAxesColumnIncreasing, ChevronRight, Flag, Gauge,
   MapPinned, Medal, Settings, Shield, Trophy, Wrench, Zap, Play,
   Volume2, VolumeX, Monitor, Crown, Timer, Award,
 } from 'lucide-react';
