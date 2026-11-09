@@ -361,13 +361,17 @@ export class MotorcyclePhysics {
         : 0;
     let skidTarget = Math.min(1, Math.max(latExcess, longExcess) * 1.8);
 
-    // Trail braking at lean: heavy front brake while deeply leaned keeps the
-    // original slide behaviour (audio/haptics/hud depend on this signal).
+    // Trail-braking feedback should describe actual tire saturation, not
+    // merely a large brake input. Moderate braking while leaned is normal;
+    // flag a slide only when braking and cornering are competing near the grip
+    // limit, or the lateral demand is already exceeding available grip.
+    const combinedGripUse = Math.sqrt(
+      longUseRaw * longUseRaw + latUse * latUse
+    );
     this.state.trailBrakingSlide =
-      input.frontBrake > 0.65 && Math.abs(this.state.roll) > 0.8;
-    if (this.state.trailBrakingSlide) {
-      skidTarget = Math.max(skidTarget, Math.min(1, this.state.skidRatio + dt * 3));
-    }
+      input.frontBrake > 0.35 &&
+      Math.abs(this.state.roll) > 0.55 &&
+      (combinedGripUse > 0.92 || latExcess > 0.05);
     if (skidTarget > this.state.skidRatio) {
       this.state.skidRatio = Math.min(skidTarget, this.state.skidRatio + dt * 3.5);
     } else {
@@ -386,12 +390,13 @@ export class MotorcyclePhysics {
       skidRatio: this.state.skidRatio,
     });
 
-    // 11. Lean angle from the corner the rider is actually requesting
-    // (theta = arctan(v * omega / g), clamped to the MotoGP lean limit)
-    const latAccelCmd = v * turnRateCmd;
-    const targetRoll = Math.max(
+    // 11. Lean follows the lateral acceleration the tires actually deliver.
+    // Using the requested acceleration here made the bike visually hold a
+    // full lean even after braking/traction limits had forced it to run wide.
+    const targetRoll = THREE.MathUtils.clamp(
+      Math.atan(latActual / GRAVITY),
       -MAX_LEAN,
-      Math.min(MAX_LEAN, Math.atan(latAccelCmd / GRAVITY))
+      MAX_LEAN
     );
     this.state.roll = THREE.MathUtils.damp(this.state.roll, targetRoll, 9, dt);
 
