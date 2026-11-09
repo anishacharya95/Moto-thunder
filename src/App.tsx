@@ -33,6 +33,7 @@ export default function App() {
   const [showPause, setShowPause] = useState(false);
   const [postRaceResults, setPostRaceResults] = useState<RiderRaceState[] | null>(null);
   const [earnedCredits, setEarnedCredits] = useState(0);
+  const [fps, setFps] = useState(0);
 
   // Active Race Configuration
   const [activeMode, setActiveMode] = useState<GameMode>('quick_race');
@@ -65,6 +66,28 @@ export default function App() {
   // Racing Engine Ref & Canvas Mount
   const canvasMountRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<RacingEngine | null>(null);
+
+  // Sample rendered frame rate only while the FPS overlay is enabled in a live race.
+  useEffect(() => {
+    if (currentScreen !== 'racing' || !saveData.settings.showFps) {
+      setFps(0);
+      return;
+    }
+    let frameCount = 0;
+    let lastSample = performance.now();
+    let animationId = 0;
+    const sample = (now: number) => {
+      frameCount += 1;
+      if (now - lastSample >= 500) {
+        setFps(Math.round((frameCount * 1000) / (now - lastSample)));
+        frameCount = 0;
+        lastSample = now;
+      }
+      animationId = window.requestAnimationFrame(sample);
+    };
+    animationId = window.requestAnimationFrame(sample);
+    return () => window.cancelAnimationFrame(animationId);
+  }, [currentScreen, saveData.settings.showFps]);
 
   // Persist save data on change.
   // Updates accept either a concrete value or an updater reading the LATEST
@@ -283,6 +306,12 @@ export default function App() {
         <div className="relative w-full h-full">
           {/* Isolated WebGL Canvas Container */}
           <div ref={canvasMountRef} className="w-full h-full" />
+
+          {saveData.settings.showFps && (
+            <div className="pointer-events-none absolute right-4 top-16 z-30 rounded-lg border border-emerald-400/40 bg-black/75 px-2.5 py-1 font-mono text-[10px] font-bold text-emerald-300">
+              {fps} FPS
+            </div>
+          )}
 
           {/* Motorsport Racing HUD */}
           <RacingHUD

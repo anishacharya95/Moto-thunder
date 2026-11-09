@@ -233,6 +233,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
+          <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-900/60 p-3">
+            <div className="flex flex-col">
+              <span className="text-xs font-bold text-zinc-200">Show FPS counter</span>
+              <span className="text-[10px] text-zinc-500">Display live rendering performance during races</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => update({ showFps: !settings.showFps })}
+              aria-pressed={settings.showFps}
+              className={`rounded-xl px-3 py-1 text-xs font-bold ${settings.showFps ? 'bg-emerald-500 text-black' : 'bg-zinc-800 text-zinc-400'}`}
+            >
+              {settings.showFps ? 'ON' : 'OFF'}
+            </button>
+          </div>
+
           {/* Audio Sliders */}
           <div>
             <div className="flex items-center gap-2 text-sm font-bold text-amber-400 uppercase tracking-wider mb-3">
