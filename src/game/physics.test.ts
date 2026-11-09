@@ -185,3 +185,41 @@ test('out-of-range controls are clamped before physics integration', () => {
   assert.ok(Math.abs(physics.state.roll) <= 1.11);
   assert.ok(Number.isFinite(physics.state.heading));
 });
+
+test('braking while cornering reduces delivered lean instead of preserving requested lean', () => {
+  const unbraked = makePhysics();
+  const trailBraked = makePhysics();
+
+  for (let i = 0; i < 300; i++) {
+    const launch = { ...neutralInput, throttle: 1, tuckIn: true };
+    unbraked.update(launch, 1 / 60);
+    trailBraked.update(launch, 1 / 60);
+  }
+
+  for (let i = 0; i < 36; i++) {
+    unbraked.update({ ...neutralInput, throttle: 0.6, steer: 0.85 }, 1 / 60);
+    trailBraked.update({
+      ...neutralInput,
+      throttle: 0.6,
+      frontBrake: 0.85,
+      steer: 0.85,
+    }, 1 / 60);
+  }
+
+  assert.ok(Math.abs(unbraked.state.roll) > 0.1, 'unbraked bike should establish a cornering lean');
+  assert.ok(
+    Math.abs(trailBraked.state.roll) < Math.abs(unbraked.state.roll),
+    'braking consumes tire grip, so delivered cornering lean should reduce',
+  );
+  assert.ok(Number.isFinite(trailBraked.state.roll));
+});
+
+test('hard straight-line braking does not falsely report a trail-braking slide', () => {
+  const physics = makePhysics();
+  for (let i = 0; i < 300; i++) {
+    physics.update({ ...neutralInput, throttle: 1, tuckIn: true }, 1 / 60);
+  }
+
+  physics.update({ ...neutralInput, frontBrake: 1 }, 1 / 60);
+  assert.equal(physics.state.trailBrakingSlide, false);
+});
