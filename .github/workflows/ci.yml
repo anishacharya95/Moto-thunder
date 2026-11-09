@@ -1,0 +1,31 @@
+name: Moto Thunder GP CI
+
+on:
+  push:
+    branches:
+      - main
+      - codex/moto-thunder-gp-upgrade
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: TypeScript and production build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Type-check
+        run: bun run lint
+      - name: Build production bundle
+        run: bun run build
