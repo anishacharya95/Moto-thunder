@@ -22,6 +22,7 @@ interface TouchControlsProps {
 }
 
 export const TouchControls: React.FC<TouchControlsProps> = ({
+  controlType = 'touch_buttons',
   steerSensitivity,
   invertSteering = false,
   manualGearbox = false,
@@ -36,6 +37,10 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
   const [tuckPressed, setTuckPressed] = useState(false);
   const [shiftUpPressed, setShiftUpPressed] = useState(false);
   const [shiftDownPressed, setShiftDownPressed] = useState(false);
+  const [sliderSteer, setSliderSteer] = useState(0);
+  const [gyroEnabled, setGyroEnabled] = useState(false);
+  const [gyroStatus, setGyroStatus] = useState('Tap to enable motion steering');
+  const gyroCenter = useRef<number | null>(null);
 
   // Dedicated pointer IDs for multitouch isolation
   const leftPointerId = useRef<number | null>(null);
@@ -59,6 +64,46 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
     const steerVal = invertSteering ? -rawSteer : rawSteer;
     onInputChange({ steer: steerVal * steerSensitivity });
   };
+
+  const enableGyro = async () => {
+    if (typeof window === 'undefined' || !('DeviceOrientationEvent' in window)) {
+      setGyroStatus('Motion sensor unavailable — choose L / R buttons');
+      return;
+    }
+    try {
+      const Orientation = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+        requestPermission?: () => Promise<'granted' | 'denied'>;
+      };
+      if (typeof Orientation.requestPermission === 'function') {
+        const permission = await Orientation.requestPermission();
+        if (permission !== 'granted') {
+          setGyroStatus('Motion permission denied — choose L / R buttons');
+          return;
+        }
+      }
+      gyroCenter.current = null;
+      setGyroEnabled(true);
+      setGyroStatus('Move phone left or right to steer');
+    } catch {
+      setGyroStatus('Could not enable motion — choose L / R buttons');
+    }
+  };
+
+  useEffect(() => {
+    if (controlType !== 'touch_tilt' || !gyroEnabled) return;
+    const handleOrientation = (event: DeviceOrientationEvent) => {
+      if (event.gamma === null) return;
+      if (gyroCenter.current === null) gyroCenter.current = event.gamma;
+      const offset = event.gamma - gyroCenter.current;
+      const raw = Math.max(-1, Math.min(1, offset / 30));
+      onInputChange({ steer: (invertSteering ? -raw : raw) * steerSensitivity });
+    };
+    window.addEventListener('deviceorientation', handleOrientation);
+    return () => {
+      window.removeEventListener('deviceorientation', handleOrientation);
+      onInputChange({ steer: 0 });
+    };
+  }, [controlType, gyroEnabled, invertSteering, steerSensitivity, onInputChange]);
 
   // --- LEFT BUTTON HANDLERS ---
   const handleLeftDown = (e: React.PointerEvent) => {
@@ -267,6 +312,38 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
           </button>
         )}
 
+        {controlType === 'touch_slider' ? (
+          <div className="w-44 sm:w-56 rounded-2xl border border-cyan-500/50 bg-zinc-950/85 p-3 shadow-2xl">
+            <div className="mb-2 flex justify-between text-[10px] font-bold tracking-wider text-zinc-300">
+              <span>LEFT</span><span className="text-cyan-300">ANALOG STEER</span><span>RIGHT</span>
+            </div>
+            <input
+              aria-label="Analog steering"
+              type="range"
+              min="-1"
+              max="1"
+              step="0.01"
+              value={sliderSteer}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                setSliderSteer(value);
+                onInputChange({ steer: (invertSteering ? -value : value) * steerSensitivity });
+              }}
+              onPointerUp={() => { setSliderSteer(0); onInputChange({ steer: 0 }); }}
+              onPointerCancel={() => { setSliderSteer(0); onInputChange({ steer: 0 }); }}
+              className="w-full accent-cyan-400 touch-pan-x"
+            />
+          </div>
+        ) : controlType === 'touch_tilt' ? (
+          <button
+            type="button"
+            onClick={enableGyro}
+            className="max-w-56 rounded-2xl border border-cyan-500/50 bg-zinc-950/90 px-4 py-3 text-left text-xs font-bold text-cyan-200 shadow-xl"
+          >
+            <span className="block">MOTION STEERING {gyroEnabled ? 'ON' : 'OFF'}</span>
+            <span className="mt-1 block text-[9px] font-normal text-zinc-400">{gyroStatus}</span>
+          </button>
+        ) : (
         <div className="flex items-center gap-3">
           {/* LEFT STEERING BUTTON */}
           <button
@@ -316,6 +393,7 @@ export const TouchControls: React.FC<TouchControlsProps> = ({
             )}
           </button>
         </div>
+        )}
       </div>
 
       {/* ======================================================== */}
