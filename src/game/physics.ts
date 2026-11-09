@@ -56,6 +56,11 @@ const STATIC_FRONT_SHARE = 0.50;
 const MAX_LEAN = 1.11;              // 64 degrees
 const ENGINE_BRAKE = 0.5;           // m/s^2 at closed throttle
 
+/** Clamp finite control values; invalid sensor/input values become neutral. */
+function clampFinite(value: number, min: number, max: number): number {
+  return Number.isFinite(value) ? THREE.MathUtils.clamp(value, min, max) : 0;
+}
+
 export class MotorcyclePhysics {
   public state: PhysicsState;
   private stats: BikeStats;
@@ -159,7 +164,18 @@ export class MotorcyclePhysics {
   }
 
   public update(input: RiderInput, delta: number, trackInfo?: { distToCenter: number; trackHalfWidth: number }): void {
-    const dt = Math.min(delta, 0.05);
+    // Treat browser/device timing and control values as untrusted. A suspended
+    // tab, sensor glitch, or malformed caller must never inject NaN into state.
+    input = {
+      throttle: clampFinite(input.throttle, 0, 1),
+      frontBrake: clampFinite(input.frontBrake, 0, 1),
+      rearBrake: clampFinite(input.rearBrake, 0, 1),
+      steer: clampFinite(input.steer, -1, 1),
+      tuckIn: input.tuckIn === true,
+      shiftUp: input.shiftUp === true,
+      shiftDown: input.shiftDown === true,
+    };
+    const dt = Number.isFinite(delta) ? THREE.MathUtils.clamp(delta, 0, 0.05) : 0;
     // Wet mass: the fuel load is part of the bike until it is burned off,
     // so an early-race bike is heavier and transfers load harder than a
     // light one at the end of the race.
