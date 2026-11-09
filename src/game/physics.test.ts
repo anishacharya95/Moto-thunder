@@ -1,0 +1,152 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import * as THREE from 'three';
+import { MotorcyclePhysics, type RiderInput } from './physics';
+import type { BikeStats, BikeUpgrades, PlayerSettings } from '../types/game';
+
+const stats: BikeStats = {
+  topSpeed: 330,
+  acceleration: 92,
+  handling: 90,
+  braking: 88,
+  weight: 157,
+  power: 260,
+};
+
+const upgrades: BikeUpgrades = {
+  engine: 0,
+  brakes: 0,
+  chassis: 0,
+  tires: 0,
+  aero: 0,
+};
+
+const settings: PlayerSettings = {
+  controls: 'touch_slider',
+  steerSensitivity: 1,
+  invertSteering: false,
+  autoBrakeAssist: false,
+  racingLineAssist: true,
+  tcsLevel: 1,
+  antiWheelie: true,
+  manualGearbox: false,
+  soundVolume: 0.8,
+  engineVolume: 0.8,
+  fxVolume: 0.8,
+  musicVolume: 0.5,
+  speedUnit: 'kmh',
+  graphicsQuality: 'medium',
+  showFps: false,
+  hapticFeedback: false,
+  aiDifficulty: 'normal',
+};
+
+const neutralInput: RiderInput = {
+  throttle: 0,
+  frontBrake: 0,
+  rearBrake: 0,
+  steer: 0,
+  tuckIn: false,
+};
+
+function makePhysics(overrides: Partial<PlayerSettings> = {}): MotorcyclePhysics {
+  return new MotorcyclePhysics(
+    stats,
+    upgrades,
+    new THREE.Vector3(),
+    0,
+    { ...settings, ...overrides },
+  );
+}
+
+test('throttle accelerates the motorcycle and burns fuel', () => {
+  const physics = makePhysics();
+  const startingFuel = physics.consumables.fuelKg;
+
+  for (let i = 0; i < 180; i++) {
+    physics.update({ ...neutralInput, throttle: 1, tuckIn: true }, 1 / 60);
+  }
+
+  assert.ok(physics.state.speedMs > 5, 'bike should accelerate from rest');
+  assert.ok(physics.state.speedKmh > 0);
+  assert.ok(physics.consumables.fuelKg < startingFuel);
+  assert.ok(Number.isFinite(physics.state.position.z));
+});
+
+test('braking reduces speed after acceleration', () => {
+  const physics = makePhysics();
+
+  for (let i = 0; i < 240; i++) {
+    physics.update({ ...neutralInput, throttle: 1, tuckIn: true }, 1 / 60);
+  }
+
+  const speedBeforeBraking = physics.state.speedMs;
+  for (let i = 0; i < 90; i++) {
+    physics.update({ ...neutralInput, frontBrake: 1, rearBrake: 0.5 }, 1 / 60);
+  }
+
+  assert.ok(speedBeforeBraking > 5);
+  assert.ok(physics.state.speedMs < speedBeforeBraking);
+  assert.ok(physics.state.speedMs >= 0);
+});
+
+test('manual gearbox shifts once per press edge', () => {
+  const physics = makePhysics({ manualGearbox: true });
+  const shiftInput = { ...neutralInput, shiftUp: true };
+
+  physics.update(shiftInput, 1 / 60);
+  assert.equal(physics.state.gear, 2);
+
+  for (let i = 0; i < 20; i++) physics.update(shiftInput, 1 / 60);
+  assert.equal(physics.state.gear, 2, 'holding the button must not repeat shifts');
+
+  physics.update({ ...neutralInput, shiftUp: false }, 1 / 60);
+  physics.update(shiftInput, 1 / 60);
+  assert.equal(physics.state.gear, 3);
+});
+
+test('steering produces a finite lean and changes heading at speed', () => {
+  const physics = makePhysics();
+  for (let i = 0; i < 180; i++) {
+    physics.update({ ...neutralInput, throttle: 1, tuckIn: true }, 1 / 60);
+  }
+
+  const initialHeading = physics.state.heading;
+  for (let i = 0; i < 90; i++) {
+    physics.update({ ...neutralInput, throttle: 0.7, steer: 0.8 }, 1 / 60);
+  }
+
+  assert.notEqual(physics.state.heading, initialHeading);
+  assert.ok(Number.isFinite(physics.state.roll));
+  assert.ok(Math.abs(physics.state.roll) <= 1.11);
+});
+
+test('race reset restores speed, gearbox, fuel, tires and brakes', () => {
+  const physics = makePhysics();
+  for (let i = 0; i < 180; i++) {
+    physics.update({ ...neutralInput, throttle: 1 }, 1 / 60);
+  }
+  physics.consumables.wearFront = 0.4;
+  physics.consumables.wearRear = 0.5;
+  physics.consumables.brakeTemp = 0.8;
+
+  physics.setPosition(new THREE.Vector3(3, 0, 4), Math.PI / 2);
+
+  assert.equal(physics.state.speedMs, 0);
+  assert.equal(physics.state.gear, 1);
+  assert.equal(physics.consumables.fuelKg, 16);
+  assert.equal(physics.consumables.wearFront, 0);
+  assert.equal(physics.consumables.wearRear, 0);
+  assert.equal(physics.consumables.brakeTemp, 0);
+  assert.equal(physics.state.position.x, 3);
+  assert.equal(physics.state.position.z, 4);
+});
+
+test('large frame deltas are capped to avoid unstable physics jumps', () => {
+  const physics = makePhysics();
+  physics.update({ ...neutralInput, throttle: 1 }, 5);
+
+  assert.ok(physics.state.speedMs > 0);
+  assert.ok(physics.state.speedMs < 2, 'a five-second frame should be capped to 50 ms');
+  assert.ok(Number.isFinite(physics.state.speedKmh));
+});
