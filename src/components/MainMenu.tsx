@@ -1,16 +1,11 @@
 import React from 'react';
 import { PlayerSaveData, GameMode } from '../types/game';
 import { MOTORCYCLES } from '../data/bikes';
+import { CIRCUITS } from '../data/circuits';
 import {
-  Play,
-  Trophy,
-  Flame,
-  Timer,
-  Compass,
-  Wrench,
-  Settings,
-  Sparkles,
-  Zap,
+  Bike, ChartNoAxesColumnIncreasing, ChevronRight, Flag, Gauge, Gem,
+  MapPinned, Medal, Settings, Shield, Trophy, Wrench, Zap, Play,
+  Volume2, VolumeX, Monitor, Crown, Timer, Award,
 } from 'lucide-react';
 import { soundEngine } from '../services/audio';
 
@@ -29,225 +24,165 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   onOpenChampionship,
   onOpenSettings,
 }) => {
-  const currentBike = MOTORCYCLES.find((b) => b.id === saveData.selectedBikeId) || MOTORCYCLES[0];
+  const currentBike = MOTORCYCLES.find((bike) => bike.id === saveData.selectedBikeId) || MOTORCYCLES[0];
+  const nextCircuit = CIRCUITS[saveData.championshipCurrentRound % CIRCUITS.length] || CIRCUITS[0];
+  const bestLapCount = Object.keys(saveData.bestLaps).length;
+  const soundOn = saveData.settings.soundVolume > 0;
 
-  const handleModeClick = (mode: GameMode) => {
+  const click = (action: () => void) => {
     soundEngine.playClick();
-    onSelectMode(mode);
+    action();
   };
+  const start = (mode: GameMode) => click(() => onSelectMode(mode));
 
   return (
-    <div className="absolute inset-0 bg-zinc-950 flex flex-col z-20 font-racing overflow-hidden select-none">
-      {/* Background motorsport imagery with subtle speed gradient and carbon grid */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-950/20 via-zinc-950 to-black pointer-events-none" />
+    <main className="mt-home absolute inset-0 z-20 flex flex-col overflow-y-auto overflow-x-hidden bg-[#050b18] text-white font-racing select-none">
+      <div className="mt-sky pointer-events-none absolute inset-0" />
+      <div className="mt-track-lines pointer-events-none absolute inset-0" />
 
-      {/* Top Bar */}
-      <div className="h-16 px-6 border-b border-zinc-800/80 flex items-center justify-between z-10 bg-zinc-950/60 backdrop-blur-sm">
-        {/* Branding */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-rose-600 flex items-center justify-center shadow-lg shadow-amber-500/30">
-            <Zap className="w-5 h-5 text-black fill-current" />
+      <header className="mt-topbar relative z-20 flex min-h-[68px] items-center justify-between gap-3 border-b border-white/10 px-4 py-2 sm:px-7">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="mt-avatar flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-white/70 bg-gradient-to-br from-red-500 via-slate-900 to-black shadow-lg">
+            <Bike className="h-7 w-7 text-white" />
           </div>
-          <div>
-            <div className="text-[10px] text-amber-400 font-bold tracking-widest uppercase">
-              GRAND PRIX MOTORCYCLE RACING
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-extrabold italic sm:text-base">
+              RACER <Crown className="h-4 w-4 fill-amber-400 text-amber-300" />
             </div>
-            <div className="text-xl font-teko font-extrabold uppercase tracking-wider text-white leading-none">
-              MOTO THUNDER GP
+            <div className="mt-1 flex items-center gap-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300">REP {saveData.reputation.toLocaleString()}</span>
+              <span className="h-1.5 w-20 overflow-hidden rounded-full bg-white/20">
+                <span className="block h-full w-2/3 rounded-full bg-gradient-to-r from-amber-300 to-yellow-500" />
+              </span>
             </div>
           </div>
         </div>
 
-        {/* User Stats & Wallet */}
-        <div className="flex items-center gap-3">
-          {/* Active Motorcycle Badge */}
-          <div
-            onClick={onOpenGarage}
-            className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-zinc-700 cursor-pointer text-xs"
-          >
-            <span className="text-zinc-400">Bike:</span>
-            <span className="font-bold text-white uppercase">{currentBike.name}</span>
+        <div className="flex shrink-0 items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 rounded-xl border border-amber-300/30 bg-slate-950/70 px-3 py-2 shadow-lg">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-gradient-to-br from-yellow-200 to-amber-600 text-slate-950"><Zap className="h-4 w-4 fill-current" /></span>
+            <span className="font-teko text-xl font-bold tabular-nums sm:text-2xl">{saveData.credits.toLocaleString()}</span>
           </div>
-
-          {/* Credits */}
-          <div className="px-3.5 py-1.5 rounded-xl bg-emerald-950/60 border border-emerald-600/60 flex items-center gap-2 text-emerald-300">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span className="text-base font-teko font-bold tracking-wide">
-              ${saveData.credits.toLocaleString()}
-            </span>
-          </div>
-
-          {/* Settings Button */}
-          <button
-            onClick={() => {
-              soundEngine.playClick();
-              onOpenSettings();
-            }}
-            className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-300 flex items-center justify-center active:scale-95 transition-transform"
-          >
-            <Settings className="w-4 h-4" />
-          </button>
+          <button aria-label="Open settings" onClick={() => click(onOpenSettings)} className="mt-icon-btn"><Settings className="h-5 w-5" /></button>
         </div>
-      </div>
+      </header>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col md:flex-row items-center justify-between p-6 md:p-12 z-10 overflow-y-auto">
-        {/* Left Side: Game Mode Launch Cards */}
-        <div className="w-full max-w-lg space-y-3">
-          <div className="text-xs uppercase font-bold text-zinc-400 tracking-widest mb-1">
-            Race Modes
+      <section className="mt-hero relative z-10 grid flex-1 grid-cols-1 gap-4 px-4 pb-4 pt-5 sm:px-7 lg:grid-cols-[minmax(285px,0.82fr)_minmax(360px,1.35fr)] lg:items-center lg:gap-7 lg:px-10 lg:py-5">
+        <div className="relative z-10 order-2 flex flex-col justify-center lg:order-1">
+          <div className="mb-3">
+            <div className="mt-logo-kicker">THE ULTIMATE MOTORCYCLE RACING EXPERIENCE</div>
+            <h1 className="mt-logo text-[clamp(2.8rem,7vw,6.2rem)] font-black uppercase italic leading-[0.78] tracking-[-0.065em]">
+              <span className="block text-slate-100">MOTO</span>
+              <span className="block text-red-500">THUNDER</span>
+              <span className="block text-slate-100">GP<span className="ml-2 align-top text-[0.27em] tracking-[0.18em] text-amber-300">RACE • UPGRADE • WIN</span></span>
+            </h1>
           </div>
 
-          {/* QUICK RACE (Primary High-Impact Button) */}
-          <button
-            onClick={() => handleModeClick('quick_race')}
-            className="w-full p-4 rounded-3xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black flex items-center justify-between shadow-2xl shadow-amber-500/25 active:scale-98 transition-all group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl bg-black/15 flex items-center justify-center">
-                <Play className="w-6 h-6 fill-current text-black" />
-              </div>
-              <div className="text-left">
-                <div className="text-xl font-teko font-bold uppercase tracking-wider leading-none">
-                  Quick Race
-                </div>
-                <div className="text-xs text-black/80 font-medium">
-                  Jump straight into a 12-rider GP sprint on any circuit
-                </div>
-              </div>
-            </div>
-            <span className="text-lg font-bold mr-2 group-hover:translate-x-1 transition-transform">
-              ▶
-            </span>
-          </button>
-
-          {/* CHAMPIONSHIP */}
-          <button
-            onClick={() => {
-              soundEngine.playClick();
-              onOpenChampionship();
-            }}
-            className="w-full p-3.5 rounded-3xl bg-zinc-900/80 border border-zinc-800 hover:border-amber-500/50 hover:bg-zinc-900 text-white flex items-center justify-between active:scale-98 transition-all group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                <Trophy className="w-5 h-5" />
-              </div>
-              <div className="text-left">
-                <div className="text-lg font-teko font-bold uppercase tracking-wider leading-none text-white">
-                  Moto Thunder Cup
-                </div>
-                <div className="text-xs text-zinc-400">
-                  5-Round official season championship with points standings
-                </div>
-              </div>
-            </div>
-            <span className="text-sm text-zinc-500 mr-2 group-hover:text-amber-400 transition-colors">
-              Enter ➔
-            </span>
-          </button>
-
-          {/* CAREER MODE */}
-          <button
-            onClick={() => handleModeClick('career')}
-            className="w-full p-3.5 rounded-3xl bg-zinc-900/80 border border-zinc-800 hover:border-rose-500/50 hover:bg-zinc-900 text-white flex items-center justify-between active:scale-98 transition-all group"
-          >
-            <div className="flex items-center gap-4">
-              <div className="w-11 h-11 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400">
-                <Flame className="w-5 h-5" />
-              </div>
-              <div className="text-left">
-                <div className="text-lg font-teko font-bold uppercase tracking-wider leading-none text-white">
-                  Career Mode
-                </div>
-                <div className="text-xs text-zinc-400">
-                  Earn contracts, prize money & unlock elite prototype bikes
-                </div>
-              </div>
-            </div>
-            <span className="text-sm text-zinc-500 mr-2 group-hover:text-rose-400 transition-colors">
-              Enter ➔
-            </span>
-          </button>
-
-          {/* Bottom row: Time Trial, Practice & Garage */}
-          <div className="grid grid-cols-3 gap-2.5 pt-1">
-            <button
-              onClick={() => handleModeClick('time_trial')}
-              className="p-3 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:bg-zinc-800 text-left active:scale-95 transition-transform"
-            >
-              <Timer className="w-4 h-4 text-sky-400 mb-1" />
-              <div className="text-sm font-teko font-bold uppercase leading-none text-white">
-                Time Trial
-              </div>
-              <div className="text-[10px] text-zinc-500">Solo Lap Records</div>
+          <div className="mt-5 grid gap-2.5">
+            <button onClick={() => start('career')} className="mt-mode-primary group">
+              <span className="mt-mode-icon"><Flag className="h-7 w-7 fill-current" /></span>
+              <span className="min-w-0 flex-1 text-left"><strong>CAREER</strong><small>Rise to the Champion</small></span>
+              <ChevronRight className="h-7 w-7 transition-transform group-hover:translate-x-1" />
             </button>
-
-            <button
-              onClick={() => handleModeClick('practice')}
-              className="p-3 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:bg-zinc-800 text-left active:scale-95 transition-transform"
-            >
-              <Compass className="w-4 h-4 text-emerald-400 mb-1" />
-              <div className="text-sm font-teko font-bold uppercase leading-none text-white">
-                Practice
-              </div>
-              <div className="text-[10px] text-zinc-500">Free Riding</div>
+            <button onClick={() => click(onOpenChampionship)} className="mt-mode">
+              <span className="mt-mode-icon"><Trophy className="h-7 w-7" /></span>
+              <span className="min-w-0 flex-1 text-left"><strong>CHAMPIONSHIP</strong><small>Compete for Glory</small></span>
+              <ChevronRight className="h-6 w-6" />
             </button>
-
-            <button
-              onClick={() => {
-                soundEngine.playClick();
-                onOpenGarage();
-              }}
-              className="p-3 rounded-2xl bg-zinc-900/60 border border-zinc-800 hover:bg-zinc-800 text-left active:scale-95 transition-transform"
-            >
-              <Wrench className="w-4 h-4 text-amber-400 mb-1" />
-              <div className="text-sm font-teko font-bold uppercase leading-none text-white">
-                Garage
-              </div>
-              <div className="text-[10px] text-zinc-500">10 Bikes & Tuning</div>
+            <button onClick={() => start('quick_race')} className="mt-mode">
+              <span className="mt-mode-icon"><Flag className="h-7 w-7" /></span>
+              <span className="min-w-0 flex-1 text-left"><strong>QUICK RACE</strong><small>Jump into the action</small></span>
+              <ChevronRight className="h-6 w-6" />
+            </button>
+            <button onClick={() => click(onOpenGarage)} className="mt-mode">
+              <span className="mt-mode-icon"><Wrench className="h-7 w-7" /></span>
+              <span className="min-w-0 flex-1 text-left"><strong>GARAGE</strong><small>Customize your bike</small></span>
+              <ChevronRight className="h-6 w-6" />
+            </button>
+            <button onClick={() => start('time_trial')} className="mt-mode">
+              <span className="mt-mode-icon"><ChartNoAxesColumnIncreasing className="h-7 w-7" /></span>
+              <span className="min-w-0 flex-1 text-left"><strong>STATISTICS & TIME TRIAL</strong><small>{saveData.careerRaces} races • {saveData.careerWins} wins • {bestLapCount} track records</small></span>
+              <ChevronRight className="h-6 w-6" />
             </button>
           </div>
         </div>
 
-        {/* Right Side: Active Bike Showcase Card */}
-        <div className="hidden lg:flex flex-col items-center justify-center p-6 bg-zinc-900/30 border border-zinc-800/80 rounded-3xl max-w-sm text-center">
-          <div className="text-xs uppercase font-bold text-amber-400 tracking-widest mb-1">
-            Active Machine
+        <div className="mt-showcase relative order-1 flex min-h-[235px] flex-col justify-end overflow-hidden rounded-2xl border border-white/15 lg:order-2 lg:min-h-[480px]">
+          <div className="mt-showcase-glow pointer-events-none absolute inset-0" />
+          <div className="mt-bike-art pointer-events-none absolute inset-0" aria-hidden="true">
+            <div className="mt-bike-number">{currentBike.defaultColors.raceNumber}</div>
+            <div className="mt-bike-wordmark">THUNDER GP</div>
+            <div className="mt-bike-silhouette">
+              <Bike className="h-full w-full" strokeWidth={1.15} />
+            </div>
+            <div className="mt-speed-streak mt-speed-streak-one" />
+            <div className="mt-speed-streak mt-speed-streak-two" />
           </div>
-          <h3 className="text-2xl font-teko font-bold uppercase text-white tracking-wide">
-            {currentBike.name}
-          </h3>
-          <p className="text-xs text-zinc-400 mt-1 mb-4 leading-relaxed">
-            {currentBike.description}
-          </p>
-
-          <div className="w-full space-y-2 text-xs">
-            <div className="flex justify-between py-1 border-b border-zinc-800/80">
-              <span className="text-zinc-500">Top Speed</span>
-              <span className="font-mono text-white font-bold">{currentBike.baseStats.topSpeed} km/h</span>
+          <div className="relative z-10 flex items-end justify-between gap-3 p-4 sm:p-6">
+            <div className="max-w-[65%]">
+              <div className="mb-1 text-[10px] font-black uppercase tracking-[0.24em] text-amber-300">YOUR RACE MACHINE</div>
+              <h2 className="font-teko text-3xl font-bold uppercase italic leading-none sm:text-4xl">{currentBike.name}</h2>
+              <p className="mt-1 line-clamp-2 text-xs text-slate-300">{currentBike.description}</p>
+              <div className="mt-3 flex flex-wrap gap-3 text-[10px] font-bold uppercase tracking-wider text-slate-200">
+                <span><Gauge className="mr-1 inline h-3.5 w-3.5 text-amber-300" />{currentBike.baseStats.topSpeed} km/h</span>
+                <span><Zap className="mr-1 inline h-3.5 w-3.5 text-red-400" />{currentBike.baseStats.power} bhp</span>
+              </div>
             </div>
-            <div className="flex justify-between py-1 border-b border-zinc-800/80">
-              <span className="text-zinc-500">Power Output</span>
-              <span className="font-mono text-white font-bold">{currentBike.baseStats.power} bhp</span>
-            </div>
-            <div className="flex justify-between py-1">
-              <span className="text-zinc-500">Dry Weight</span>
-              <span className="font-mono text-white font-bold">{currentBike.baseStats.weight} kg</span>
-            </div>
+            <button onClick={() => click(onOpenGarage)} className="mt-bike-edit"><Wrench className="h-4 w-4" /> BIKE BUILDER</button>
           </div>
-
-          <button
-            onClick={() => {
-              soundEngine.playClick();
-              onOpenGarage();
-            }}
-            className="w-full mt-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-bold uppercase tracking-wider active:scale-95"
-          >
-            Customize in Garage
-          </button>
+          <div className="absolute right-5 top-5 hidden -rotate-6 text-right sm:block">
+            <div className="font-teko text-3xl font-bold italic text-white drop-shadow-lg">FEEL THE SPEED</div>
+            <div className="ml-auto h-1 w-28 -skew-x-12 bg-red-500" />
+          </div>
         </div>
-      </div>
-    </div>
+      </section>
+
+      <section className="relative z-10 grid grid-cols-2 gap-2 px-4 pb-3 sm:grid-cols-4 sm:px-7 lg:grid-cols-5 lg:px-10">
+        <button onClick={() => start('quick_race')} className="mt-feature">
+          <div className="mt-feature-art mt-art-track"><MapPinned className="h-10 w-10" /></div>
+          <span><MapPinned className="mr-1 inline h-4 w-4 text-amber-300" />TRACK SELECTION</span>
+        </button>
+        <button onClick={() => click(onOpenGarage)} className="mt-feature">
+          <div className="mt-feature-art mt-art-bike"><Bike className="h-10 w-10" /></div>
+          <span><Wrench className="mr-1 inline h-4 w-4 text-amber-300" />BIKE BUILDER</span>
+        </button>
+        <button onClick={() => click(onOpenChampionship)} className="mt-feature">
+          <div className="mt-feature-art mt-art-trophy"><Trophy className="h-11 w-11" /></div>
+          <span><Medal className="mr-1 inline h-4 w-4 text-amber-300" />TOURNAMENTS</span>
+        </button>
+        <button onClick={() => click(onOpenChampionship)} className="mt-feature">
+          <div className="mt-feature-art mt-art-podium"><Award className="h-11 w-11" /></div>
+          <span><Trophy className="mr-1 inline h-4 w-4 text-amber-300" />CHAMPIONSHIP</span>
+        </button>
+        <button onClick={() => start('practice')} className="mt-feature col-span-2 sm:col-span-1">
+          <div className="mt-feature-art mt-art-practice"><Shield className="h-10 w-10" /></div>
+          <span><Timer className="mr-1 inline h-4 w-4 text-amber-300" />PRACTICE MODE</span>
+        </button>
+      </section>
+
+      <section className="relative z-10 flex flex-col gap-3 px-4 pb-4 sm:flex-row sm:items-center sm:justify-between sm:px-7 lg:px-10">
+        <div className="mt-next-race flex min-w-0 items-center gap-3 rounded-xl border border-white/15 bg-slate-950/80 p-3">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-white/10 text-2xl">{nextCircuit.flag}</div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">NEXT CHALLENGE</div>
+            <div className="truncate font-teko text-xl font-bold uppercase">{nextCircuit.name}</div>
+            <div className="text-xs text-slate-400">{nextCircuit.country} • {nextCircuit.lengthKm.toFixed(1)} km • {nextCircuit.turns} turns</div>
+          </div>
+          <button onClick={() => start('quick_race')} className="mt-race-now">RACE NOW <ChevronRight className="h-4 w-4" /></button>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 rounded-xl border border-white/10 bg-black/35 px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-300 sm:justify-end">
+          <span className="text-emerald-400"><span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399]" />READY TO RACE</span>
+          <span className="flex items-center gap-1.5">{soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />} SOUND {soundOn ? 'ON' : 'OFF'}</span>
+          <span className="flex items-center gap-1.5"><Monitor className="h-4 w-4" /> {saveData.settings.graphicsQuality.toUpperCase()}</span>
+          <button onClick={() => click(onOpenSettings)} className="text-amber-300 hover:text-white">SETTINGS</button>
+        </div>
+      </section>
+
+      <footer className="relative z-10 mt-auto flex items-center justify-center gap-3 border-t border-white/10 bg-black/55 px-4 py-3 text-center">
+        <span className="h-1 w-10 -skew-x-12 bg-red-600 sm:w-16" />
+        <span className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-300 sm:text-xs sm:tracking-[0.32em]">THE ULTIMATE MOTORCYCLE RACING EXPERIENCE</span>
+        <span className="h-1 w-10 -skew-x-12 bg-red-600 sm:w-16" />
+      </footer>
+    </main>
   );
 };
